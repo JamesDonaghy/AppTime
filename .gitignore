@@ -1,0 +1,16 @@
+# Build results
+bin/
+obj/
+publish/
+
+# Visual Studio / VS Code workspace state
+.vs/
+.vscode/
+
+# User-specific project files (machine-specific IDE settings)
+*.user
+*.suo
+
+# OS-generated files
+.DS_Store
+Thumbs.db
