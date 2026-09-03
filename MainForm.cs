@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -313,10 +315,35 @@ namespace AppTime
 
             foreach (var app in filtered.OrderBy(a => a.Name))
             {
-                libraryFlow.Controls.Add(new AppCard(app));
+                var card = new AppCard(app);
+                card.LaunchRequested += (_, _) => LaunchApplication(app);
+                libraryFlow.Controls.Add(card);
             }
 
             libraryFlow.ResumeLayout();
+        }
+
+        private void LaunchApplication(AppEntry app)
+        {
+            if (string.IsNullOrWhiteSpace(app.ExecutablePath) || !File.Exists(app.ExecutablePath))
+            {
+                MessageBox.Show(this, $"Couldn't find \"{app.ExecutablePath}\".\n\nCheck the application's file path.",
+                    "Application not found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                // UseShellExecute rather than launching the exe directly - lets Windows
+                // handle things like elevation prompts the same way double-clicking the
+                // exe in Explorer would.
+                Process.Start(new ProcessStartInfo(app.ExecutablePath) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't launch \"{app.Name}\".\n\n{ex.Message}",
+                    "Launch failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
     }
 }

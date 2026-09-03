@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -6,8 +7,8 @@ namespace AppTime
 {
     /// A single application tile in the library grid. Owner-drawn (rather than built
     /// from child Label controls) so the rounded card shape, border and hover state can
-    /// all be handled in one place - there's no launch button or icon yet, so the extra
-    /// control-composition wouldn't buy much at this stage.
+    /// all be handled in one place. Double-click launches the application; there's no
+    /// separate Launch button yet, so the hover state doubles as the affordance hint.
     public class AppCard : Panel
     {
         private const int CornerRadius = 10;
@@ -15,6 +16,10 @@ namespace AppTime
         private bool isHovered;
 
         public AppEntry App { get; }
+
+        // Raised on double-click. MainForm owns the actual Process.Start call - this
+        // control only knows how to ask for it.
+        public event EventHandler? LaunchRequested;
 
         public AppCard(AppEntry app)
         {
@@ -30,6 +35,12 @@ namespace AppTime
 
             MouseEnter += (_, _) => { isHovered = true; Invalidate(); };
             MouseLeave += (_, _) => { isHovered = false; Invalidate(); };
+        }
+
+        protected override void OnDoubleClick(EventArgs e)
+        {
+            base.OnDoubleClick(e);
+            LaunchRequested?.Invoke(this, EventArgs.Empty);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -64,10 +75,12 @@ namespace AppTime
             TextRenderer.DrawText(g, App.Name, AppTheme.CardTitle, nameRect, AppTheme.TextPrimary,
                 TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 
-            // Usage time, bottom-left.
-            var usageText = FormatUsage(App.TotalUsageTime);
-            var usageRect = new Rectangle(contentRect.Left, contentRect.Bottom - 16, contentRect.Width, 16);
-            TextRenderer.DrawText(g, usageText, AppTheme.SmallText, usageRect, AppTheme.TextSecondary,
+            // Bottom-left: usage time normally, a launch hint while hovered - keeps the
+            // double-click affordance discoverable without adding a real button.
+            var bottomText = isHovered ? "Double-click to launch" : FormatUsage(App.TotalUsageTime);
+            var bottomColor = isHovered ? AppTheme.Accent : AppTheme.TextSecondary;
+            var bottomRect = new Rectangle(contentRect.Left, contentRect.Bottom - 16, contentRect.Width, 16);
+            TextRenderer.DrawText(g, bottomText, AppTheme.SmallText, bottomRect, bottomColor,
                 TextFormatFlags.Bottom | TextFormatFlags.Left | TextFormatFlags.NoPadding);
         }
 
