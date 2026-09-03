@@ -215,15 +215,35 @@ namespace AppTime
                 Padding = new Padding(28, 16, 28, 20)
             };
 
+            var headerRow = new Panel { Dock = DockStyle.Top, Height = 36 };
+
             var heading = new Label
             {
                 Text = "YOUR APPLICATIONS",
-                Dock = DockStyle.Top,
-                Height = 32,
+                Dock = DockStyle.Fill,
                 Font = AppTheme.SectionHeading,
                 ForeColor = AppTheme.TextSecondary,
                 TextAlign = ContentAlignment.MiddleLeft
             };
+
+            var btnAddApplication = new Button
+            {
+                Text = "+ Add Application",
+                Dock = DockStyle.Right,
+                Width = 150,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppTheme.Accent,
+                ForeColor = Color.White,
+                Font = AppTheme.Base
+            };
+            btnAddApplication.FlatAppearance.BorderSize = 0;
+            btnAddApplication.Click += BtnAddApplication_Click;
+
+            // Fill-docked heading added before the Right-docked button, so the button
+            // claims its fixed slice on the right and the heading fills the rest -
+            // same Fill-then-edge ordering used throughout this layout.
+            headerRow.Controls.Add(heading);
+            headerRow.Controls.Add(btnAddApplication);
 
             libraryFlow = new FlowLayoutPanel
             {
@@ -235,13 +255,42 @@ namespace AppTime
                 Padding = new Padding(0, 8, 0, 0)
             };
 
-            // Fill-docked control added before the Top-docked heading, so the heading
-            // takes its slice from the top and the flow panel fills what's left below
-            // it
+            // Fill-docked control added before the Top-docked header row, so the header
+            // takes its slice from the top and the flow panel fills what's left below it
             panel.Controls.Add(libraryFlow);
-            panel.Controls.Add(heading);
+            panel.Controls.Add(headerRow);
 
             return panel;
+        }
+
+        private void BtnAddApplication_Click(object? sender, EventArgs e)
+        {
+            using var openFileDialog = new OpenFileDialog
+            {
+                Title = "Choose an application",
+                Filter = "Applications (*.exe)|*.exe|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+
+            if (openFileDialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            using var addForm = new AddApplicationForm(openFileDialog.FileName);
+            if (addForm.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            allApps.Add(new AppEntry
+            {
+                Name = addForm.ApplicationName,
+                ExecutablePath = openFileDialog.FileName,
+                Category = addForm.Category
+            });
+
+            ApplyFilter();
         }
 
         private void ApplyFilter()
