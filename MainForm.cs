@@ -19,7 +19,7 @@ namespace AppTime
 
         public MainForm()
         {
-            allApps = SampleLibrary.GetSampleApps();
+            allApps = LibraryStorage.LoadLibrary();
 
             Text = "AppTime";
             BackColor = AppTheme.Background;
@@ -292,6 +292,7 @@ namespace AppTime
                 Category = addForm.Category
             });
 
+            LibraryStorage.SaveLibrary(allApps);
             ApplyFilter();
         }
 
@@ -313,11 +314,31 @@ namespace AppTime
                 filtered = filtered.Where(a => a.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
             }
 
-            foreach (var app in filtered.OrderBy(a => a.Name))
+            var apps = filtered.OrderBy(a => a.Name).ToList();
+
+            if (apps.Count == 0)
             {
-                var card = new AppCard(app);
-                card.LaunchRequested += (_, _) => LaunchApplication(app);
-                libraryFlow.Controls.Add(card);
+                var message = allApps.Count == 0
+                    ? "Your library is empty. Click \"+ Add Application\" to add your first app."
+                    : "No applications match your current filter.";
+
+                libraryFlow.Controls.Add(new Label
+                {
+                    Text = message,
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary,
+                    Margin = new Padding(4, 12, 0, 0)
+                });
+            }
+            else
+            {
+                foreach (var app in apps)
+                {
+                    var card = new AppCard(app);
+                    card.LaunchRequested += (_, _) => LaunchApplication(app);
+                    libraryFlow.Controls.Add(card);
+                }
             }
 
             libraryFlow.ResumeLayout();
