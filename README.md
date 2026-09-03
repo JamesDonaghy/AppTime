@@ -15,11 +15,13 @@ library view only:
 - Three-column layout: top bar, sidebar navigation, application library
 - Sidebar filtering by category
 - Basic name search
+- Add applications by browsing to an `.exe`, naming it and assigning a category
 - Application cards showing name, category and usage time
+- Double-click a card to launch its application
+- Library persists between runs (saved as JSON in `%AppData%\AppTime`)
 
-Not implemented yet: adding/editing applications, launching applications, process
-detection, time tracking, usage history/statistics, and persistence. These are
-planned for later stages.
+Not implemented yet: editing/removing applications, process detection, time
+tracking, and usage history/statistics. These are planned for later stages.
 
 ## Built With
 
