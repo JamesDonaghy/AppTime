@@ -337,6 +337,7 @@ namespace AppTime
                 {
                     var card = new AppCard(app);
                     card.LaunchRequested += (_, _) => LaunchApplication(app);
+                    card.EditRequested += (_, _) => EditApplication(app);
                     card.RemoveRequested += (_, _) => RemoveApplication(app);
                     libraryFlow.Controls.Add(card);
                 }
@@ -366,6 +367,22 @@ namespace AppTime
                 MessageBox.Show(this, $"Couldn't launch \"{app.Name}\".\n\n{ex.Message}",
                     "Launch failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void EditApplication(AppEntry app)
+        {
+            using var editForm = new EditApplicationForm(app);
+            if (editForm.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            app.Name = editForm.ApplicationName;
+            app.Category = editForm.Category;
+            app.ExecutablePath = editForm.ExecutablePath;
+
+            LibraryStorage.SaveLibrary(allApps);
+            ApplyFilter();
         }
 
         private void RemoveApplication(AppEntry app)

@@ -8,7 +8,7 @@ namespace AppTime
     /// A single application tile in the library grid. Owner-drawn (rather than built
     /// from child Label controls) so the rounded card shape, border and hover state can
     /// all be handled in one place. Double-click launches the application; right-click
-    /// gives a "Remove from Library" option.
+    /// gives "Edit..." and "Remove from Library" options.
     public class AppCard : Panel
     {
         private const int CornerRadius = 10;
@@ -25,6 +25,10 @@ namespace AppTime
         // MainForm owns the confirmation prompt and the actual removal.
         public event EventHandler? RemoveRequested;
 
+        // Raised when "Edit..." is chosen from the right-click menu. MainForm owns
+        // showing the edit dialog and applying the result.
+        public event EventHandler? EditRequested;
+
         public AppCard(AppEntry app)
         {
             App = app;
@@ -40,10 +44,15 @@ namespace AppTime
             MouseEnter += (_, _) => { isHovered = true; Invalidate(); };
             MouseLeave += (_, _) => { isHovered = false; Invalidate(); };
 
+            var editItem = new ToolStripMenuItem("Edit...");
+            editItem.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
+
             var removeItem = new ToolStripMenuItem("Remove from Library");
             removeItem.Click += (_, _) => RemoveRequested?.Invoke(this, EventArgs.Empty);
 
             var contextMenu = new ContextMenuStrip();
+            contextMenu.Items.Add(editItem);
+            contextMenu.Items.Add(new ToolStripSeparator());
             contextMenu.Items.Add(removeItem);
             ContextMenuStrip = contextMenu;
         }
