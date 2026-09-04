@@ -17,6 +17,11 @@ namespace AppTime
         private FlowLayoutPanel libraryFlow = null!;
         private SidebarItem? selectedSidebarItem;
 
+        // Polls every few seconds for whether each app's process is currently running.
+        // A WinForms Timer ticks on the UI thread, so no cross-thread Invoke is needed
+        // to update the cards from it.
+        private readonly System.Windows.Forms.Timer runningCheckTimer;
+
         public MainForm()
         {
             allApps = LibraryStorage.LoadLibrary();
@@ -37,6 +42,12 @@ namespace AppTime
             ResumeLayout(false);
 
             ApplyFilter();
+
+            runningCheckTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            runningCheckTimer.Tick += (_, _) => RefreshRunningStates();
+            runningCheckTimer.Start();
+
+            FormClosed += (_, _) => runningCheckTimer.Dispose();
         }
 
         private void InitializeComponent()
@@ -344,6 +355,56 @@ namespace AppTime
             }
 
             libraryFlow.ResumeLayout();
+
+            // Freshly created cards default to "not running" until the next timer
+            // tick - refresh immediately so switching filters or adding/editing an app
+            // doesn't show a stale state for a few seconds.
+            RefreshRunningStates();
+        }
+
+        private void RefreshRunningStates()
+        {
+            foreach (Control control in libraryFlow.Controls)
+            {
+                if (control is AppCard card)
+                {
+                    card.IsRunning = IsProcessRunning(card.App);
+                }
+            }
+        }
+
+        private static bool IsProcessRunning(AppEntry app)
+        {
+            if (string.IsNullOrWhiteSpace(app.ExecutablePath))
+            {
+                return false;
+            }
+
+            // Matches by process name rather than the exact path - simpler, and good
+            // enough for this stage. It means two different apps with the same exe
+            // name would be indistinguishable, but that's an edge case worth revisiting
+            // only if it actually comes up.
+            var processName = Path.GetFileNameWithoutExtension(app.ExecutablePath);
+            if (string.IsNullOrEmpty(processName))
+            {
+                return false;
+            }
+
+            var processes = Process.GetProcessesByName(processName);
+            try
+            {
+                return processes.Length > 0;
+            }
+            finally
+            {
+                // Process objects hold onto native handles until disposed - since we
+                // only needed the count, release them immediately rather than waiting
+                // on the finalizer.
+                foreach (var process in processes)
+                {
+                    process.Dispose();
+                }
+            }
         }
 
         private void LaunchApplication(AppEntry app)
@@ -388,13 +449,16 @@ namespace AppTime
         private void RemoveApplication(AppEntry app)
         {
             // No undo, so confirm first - and default focus to "No" as a small extra
-            // safety margin against an accidental Enter press.
-            var result = MessageBox.Show(this,
+            // safety margin against an accidental Enter press. Uses the themed
+            // ConfirmationDialog (matching the Password Manager app's "Confirm Delete")
+            // instead of a native MessageBox.
+            DialogResult result;
+            using (var confirmDialog = new ConfirmationDialog(
                 $"Remove \"{app.Name}\" from your library?\n\nThis won't uninstall the application - just removes it from AppTime.",
-                "Remove Application",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question,
-                MessageBoxDefaultButton.Button2);
+                "Remove Application"))
+            {
+                result = confirmDialog.ShowDialog(this);
+            }
 
             if (result != DialogResult.Yes)
             {

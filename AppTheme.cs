@@ -35,8 +35,20 @@ namespace AppTime
         // background, where the full accent colour would be too strong.
         public static readonly Color AccentSubtle = Color.FromArgb(0xEA, 0xF3, 0xFF);
 
+        // Solid red used only for a dialog's destructive confirm action (e.g. "Remove"
+        // in ConfirmationDialog) - kept separate from Accent so a destructive "Yes"
+        // never looks like the same normal/constructive action as a "Save" button.
+        // Matches the shade used for the same purpose in the Password Manager app.
+        public static readonly Color Danger = Color.FromArgb(0xD9, 0x4A, 0x4A);
+        public static readonly Color DangerHover = Color.FromArgb(0xB8, 0x3A, 0x3A);
+
         public static readonly Color TextPrimary = Color.FromArgb(0x20, 0x22, 0x2A);
         public static readonly Color TextSecondary = Color.FromArgb(0x6B, 0x72, 0x80);
+
+        // Status colour for the "running" indicator - kept distinct from Accent and
+        // Danger so "this app is open" reads differently from "this is selected" or
+        // "this is destructive."
+        public static readonly Color Success = Color.FromArgb(0x2E, 0xB6, 0x67);
 
         // Segoe UI is the standard modern Windows UI font and is present on every
         // supported Windows version - no new font files or dependencies needed.

@@ -8,14 +8,34 @@ namespace AppTime
     /// A single application tile in the library grid. Owner-drawn (rather than built
     /// from child Label controls) so the rounded card shape, border and hover state can
     /// all be handled in one place. Double-click launches the application; right-click
-    /// gives "Edit..." and "Remove from Library" options.
+    /// gives "Edit..." and "Remove from Library" options. A small dot and status text
+    /// show whether the app's process is currently detected running.
     public class AppCard : Panel
     {
         private const int CornerRadius = 10;
 
         private bool isHovered;
+        private bool isRunning;
 
         public AppEntry App { get; }
+
+        // Set by MainForm after each process-detection pass. Only repaints when the
+        // value actually changes, so a timer ticking every few seconds doesn't force a
+        // redraw of every card each time.
+        public bool IsRunning
+        {
+            get => isRunning;
+            set
+            {
+                if (isRunning == value)
+                {
+                    return;
+                }
+
+                isRunning = value;
+                Invalidate();
+            }
+        }
 
         // Raised on double-click. MainForm owns the actual Process.Start call - this
         // control only knows how to ask for it.
@@ -95,10 +115,37 @@ namespace AppTime
             TextRenderer.DrawText(g, App.Name, AppTheme.CardTitle, nameRect, AppTheme.TextPrimary,
                 TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 
-            // Bottom-left: usage time normally, a launch hint while hovered - keeps the
-            // double-click affordance discoverable without adding a real button.
-            var bottomText = isHovered ? "Double-click to launch" : FormatUsage(App.TotalUsageTime);
-            var bottomColor = isHovered ? AppTheme.Accent : AppTheme.TextSecondary;
+            // Small dot, top-right - whether the app's process is currently running.
+            // Paired with the "Running" text below rather than relying on colour alone.
+            if (isRunning)
+            {
+                const int dotSize = 8;
+                var dotRect = new Rectangle(contentRect.Right - dotSize, contentRect.Top + 1, dotSize, dotSize);
+                using var dotBrush = new SolidBrush(AppTheme.Success);
+                g.FillEllipse(dotBrush, dotRect);
+            }
+
+            // Bottom-left: usage time normally, "Running" if the process is currently
+            // detected, or a launch hint while hovered - hover always wins, since
+            // that's the user actively interacting with the card right now.
+            string bottomText;
+            Color bottomColor;
+            if (isHovered)
+            {
+                bottomText = "Double-click to launch";
+                bottomColor = AppTheme.Accent;
+            }
+            else if (isRunning)
+            {
+                bottomText = "Running";
+                bottomColor = AppTheme.Success;
+            }
+            else
+            {
+                bottomText = FormatUsage(App.TotalUsageTime);
+                bottomColor = AppTheme.TextSecondary;
+            }
+
             var bottomRect = new Rectangle(contentRect.Left, contentRect.Bottom - 16, contentRect.Width, 16);
             TextRenderer.DrawText(g, bottomText, AppTheme.SmallText, bottomRect, bottomColor,
                 TextFormatFlags.Bottom | TextFormatFlags.Left | TextFormatFlags.NoPadding);
