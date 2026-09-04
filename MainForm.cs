@@ -337,6 +337,7 @@ namespace AppTime
                 {
                     var card = new AppCard(app);
                     card.LaunchRequested += (_, _) => LaunchApplication(app);
+                    card.RemoveRequested += (_, _) => RemoveApplication(app);
                     libraryFlow.Controls.Add(card);
                 }
             }
@@ -365,6 +366,27 @@ namespace AppTime
                 MessageBox.Show(this, $"Couldn't launch \"{app.Name}\".\n\n{ex.Message}",
                     "Launch failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void RemoveApplication(AppEntry app)
+        {
+            // No undo, so confirm first - and default focus to "No" as a small extra
+            // safety margin against an accidental Enter press.
+            var result = MessageBox.Show(this,
+                $"Remove \"{app.Name}\" from your library?\n\nThis won't uninstall the application - just removes it from AppTime.",
+                "Remove Application",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2);
+
+            if (result != DialogResult.Yes)
+            {
+                return;
+            }
+
+            allApps.Remove(app);
+            LibraryStorage.SaveLibrary(allApps);
+            ApplyFilter();
         }
     }
 }

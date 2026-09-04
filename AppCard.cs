@@ -7,8 +7,8 @@ namespace AppTime
 {
     /// A single application tile in the library grid. Owner-drawn (rather than built
     /// from child Label controls) so the rounded card shape, border and hover state can
-    /// all be handled in one place. Double-click launches the application; there's no
-    /// separate Launch button yet, so the hover state doubles as the affordance hint.
+    /// all be handled in one place. Double-click launches the application; right-click
+    /// gives a "Remove from Library" option.
     public class AppCard : Panel
     {
         private const int CornerRadius = 10;
@@ -20,6 +20,10 @@ namespace AppTime
         // Raised on double-click. MainForm owns the actual Process.Start call - this
         // control only knows how to ask for it.
         public event EventHandler? LaunchRequested;
+
+        // Raised when "Remove from Library" is chosen from the right-click menu.
+        // MainForm owns the confirmation prompt and the actual removal.
+        public event EventHandler? RemoveRequested;
 
         public AppCard(AppEntry app)
         {
@@ -35,6 +39,13 @@ namespace AppTime
 
             MouseEnter += (_, _) => { isHovered = true; Invalidate(); };
             MouseLeave += (_, _) => { isHovered = false; Invalidate(); };
+
+            var removeItem = new ToolStripMenuItem("Remove from Library");
+            removeItem.Click += (_, _) => RemoveRequested?.Invoke(this, EventArgs.Empty);
+
+            var contextMenu = new ContextMenuStrip();
+            contextMenu.Items.Add(removeItem);
+            ContextMenuStrip = contextMenu;
         }
 
         protected override void OnDoubleClick(EventArgs e)
