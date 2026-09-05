@@ -17,10 +17,17 @@ namespace AppTime
         private FlowLayoutPanel libraryFlow = null!;
         private SidebarItem? selectedSidebarItem;
 
-        // Polls every few seconds for whether each app's process is currently running.
-        // A WinForms Timer ticks on the UI thread, so no cross-thread Invoke is needed
-        // to update the cards from it.
+        // Polls every few seconds for whether each app's process is currently running,
+        // and accumulates usage time while it is. A WinForms Timer ticks on the UI
+        // thread, so no cross-thread Invoke is needed to update the cards from it.
         private readonly System.Windows.Forms.Timer runningCheckTimer;
+        private DateTime lastRunningCheckTime;
+
+        // Usage time is saved every few ticks rather than on every single one, so a
+        // library with something open for hours doesn't rewrite the file every 3
+        // seconds. Anything not yet flushed is still saved when the app closes.
+        private const int SaveIntervalTicks = 10;
+        private int ticksSinceLastSave;
 
         public MainForm()
         {
@@ -43,11 +50,24 @@ namespace AppTime
 
             ApplyFilter();
 
+            lastRunningCheckTime = DateTime.Now;
             runningCheckTimer = new System.Windows.Forms.Timer { Interval = 3000 };
-            runningCheckTimer.Tick += (_, _) => RefreshRunningStates();
+            runningCheckTimer.Tick += (_, _) =>
+            {
+                TrackRunningApplications();
+                RefreshRunningStates();
+            };
             runningCheckTimer.Start();
 
-            FormClosed += (_, _) => runningCheckTimer.Dispose();
+            FormClosed += (_, _) =>
+            {
+                runningCheckTimer.Dispose();
+
+                // Flush anything accumulated since the last periodic save, so closing
+                // AppTime right after using something doesn't lose that last stretch
+                // of usage time.
+                LibraryStorage.SaveLibrary(allApps);
+            };
         }
 
         private void InitializeComponent()
@@ -360,6 +380,44 @@ namespace AppTime
             // tick - refresh immediately so switching filters or adding/editing an app
             // doesn't show a stale state for a few seconds.
             RefreshRunningStates();
+        }
+
+        private void TrackRunningApplications()
+        {
+            var now = DateTime.Now;
+            var elapsed = now - lastRunningCheckTime;
+            lastRunningCheckTime = now;
+
+            // If way more time passed than the timer interval - the PC was asleep, or
+            // this process was suspended - don't credit the whole gap as usage time.
+            // Counting one normal interval's worth is a simple, honest-enough fallback
+            // rather than a large, obviously-wrong jump in the total.
+            if (elapsed > TimeSpan.FromSeconds(30))
+            {
+                elapsed = TimeSpan.FromSeconds(3);
+            }
+
+            var anyRunning = false;
+
+            foreach (var app in allApps)
+            {
+                if (!IsProcessRunning(app))
+                {
+                    continue;
+                }
+
+                app.TotalUsageTime += elapsed;
+                app.LastUsed = now;
+                anyRunning = true;
+            }
+
+            // Only worth saving if something was actually running, and only every few
+            // ticks - see SaveIntervalTicks.
+            if (anyRunning && ++ticksSinceLastSave >= SaveIntervalTicks)
+            {
+                LibraryStorage.SaveLibrary(allApps);
+                ticksSinceLastSave = 0;
+            }
         }
 
         private void RefreshRunningStates()
