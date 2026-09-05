@@ -17,6 +17,10 @@ namespace AppTime
         private FlowLayoutPanel libraryFlow = null!;
         private Label libraryHeading = null!;
         private SidebarItem? selectedSidebarItem;
+        private Panel libraryPanel = null!;
+        private Panel overviewPanel = null!;
+        private Panel usagePanel = null!;
+        private Panel historyPanel = null!;
 
         // Polls every few seconds for whether each app's process is currently running,
         // and accumulates usage time while it is. A WinForms Timer ticks on the UI
@@ -154,9 +158,93 @@ namespace AppTime
             row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             row.Controls.Add(BuildSidebar(), 0, 0);
-            row.Controls.Add(BuildLibraryArea(), 1, 0);
+            row.Controls.Add(BuildMainContent(), 1, 0);
 
             return row;
+        }
+
+        // Overview and the app library occupy the same area and are swapped by
+        // toggling Visible, rather than each sidebar click rebuilding the layout.
+        private Panel BuildMainContent()
+        {
+            var container = new Panel { Dock = DockStyle.Fill };
+
+            libraryPanel = BuildLibraryArea();
+            libraryPanel.Visible = false;
+
+            overviewPanel = BuildOverviewPanel();
+            overviewPanel.Visible = true;
+
+            usagePanel = BuildPlaceholderPanel("Usage");
+            usagePanel.Visible = false;
+
+            historyPanel = BuildPlaceholderPanel("History");
+            historyPanel.Visible = false;
+
+            container.Controls.Add(libraryPanel);
+            container.Controls.Add(overviewPanel);
+            container.Controls.Add(usagePanel);
+            container.Controls.Add(historyPanel);
+
+            return container;
+        }
+
+        // Usage and History don't have any real content yet - just enough of a view
+        // to be a real navigation destination while the actual features are built.
+        private Panel BuildPlaceholderPanel(string title)
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = AppTheme.Background,
+                Padding = new Padding(28, 16, 28, 20)
+            };
+
+            var heading = new Label
+            {
+                Text = title,
+                AutoSize = true,
+                Location = new Point(0, 0),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextSecondary
+            };
+
+            var subtext = new Label
+            {
+                Text = "Work in progress.",
+                AutoSize = true,
+                Location = new Point(0, 32),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            };
+
+            panel.Controls.Add(heading);
+            panel.Controls.Add(subtext);
+
+            return panel;
+        }
+
+        private Panel BuildOverviewPanel()
+        {
+            // Just a placeholder for now - enough for Overview to exist as a real
+            // navigation destination. The actual dashboard content is a later task.
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = AppTheme.Background,
+                Padding = new Padding(28, 16, 28, 20)
+            };
+
+            var heading = new Label
+            {
+                Text = "Overview",
+                AutoSize = true,
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextSecondary
+            };
+            panel.Controls.Add(heading);
+
+            return panel;
         }
 
         private Panel BuildSidebar()
@@ -194,11 +282,28 @@ namespace AppTime
             };
             flow.Controls.Add(libraryHeader);
 
+            AddSidebarItem(flow, "Overview", category: null, viewKey: "Overview");
             AddSidebarItem(flow, "All Apps", category: null);
             AddSidebarItem(flow, "Creative", category: "Creative");
             AddSidebarItem(flow, "Development", category: "Development");
             AddSidebarItem(flow, "Games", category: "Games");
             AddSidebarItem(flow, "Utilities", category: "Utilities");
+
+            var insightsHeader = new Label
+            {
+                Text = "INSIGHTS",
+                AutoSize = false,
+                Width = 180,
+                Height = 28,
+                Font = new Font(AppTheme.SmallText, FontStyle.Bold),
+                ForeColor = AppTheme.TextSecondary,
+                Padding = new Padding(4, 12, 0, 0),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            flow.Controls.Add(insightsHeader);
+
+            AddSidebarItem(flow, "Usage", category: null, viewKey: "Usage");
+            AddSidebarItem(flow, "History", category: null, viewKey: "History");
 
             panel.Controls.Add(flow);
             panel.Controls.Add(divider);
@@ -206,16 +311,16 @@ namespace AppTime
             return panel;
         }
 
-        private void AddSidebarItem(FlowLayoutPanel flow, string text, string? category)
+        private void AddSidebarItem(FlowLayoutPanel flow, string text, string? category, string? viewKey = null)
         {
-            var item = new SidebarItem(text, category) { Width = 180 };
+            var item = new SidebarItem(text, category, viewKey) { Width = 180 };
             item.Click += SidebarItem_Click;
 
             sidebarItems.Add(item);
             flow.Controls.Add(item);
 
-            // "All Apps" (no category) is the sensible default view.
-            if (category is null)
+            // Overview is the default view when AppTime starts.
+            if (viewKey == "Overview")
             {
                 item.IsSelected = true;
                 selectedSidebarItem = item;
@@ -237,6 +342,19 @@ namespace AppTime
             clicked.IsSelected = true;
             selectedSidebarItem = clicked;
 
+            if (clicked.ViewKey is not null)
+            {
+                libraryPanel.Visible = false;
+                overviewPanel.Visible = clicked.ViewKey == "Overview";
+                usagePanel.Visible = clicked.ViewKey == "Usage";
+                historyPanel.Visible = clicked.ViewKey == "History";
+                return;
+            }
+
+            overviewPanel.Visible = false;
+            usagePanel.Visible = false;
+            historyPanel.Visible = false;
+            libraryPanel.Visible = true;
             ApplyFilter();
         }
 

@@ -17,16 +17,22 @@ namespace AppTime
         // The value this item filters the library by. Null means "no filter" (All Apps).
         public string? FilterCategory { get; }
 
+        // Distinguishes non-library nav items ("Overview", "Usage", "History") from
+        // library filter items, which all use FilterCategory instead. Null means this
+        // item is a library filter (All Apps / a category).
+        public string? ViewKey { get; }
+
         public bool IsSelected
         {
             get => isSelected;
             set { isSelected = value; Invalidate(); }
         }
 
-        public SidebarItem(string text, string? filterCategory)
+        public SidebarItem(string text, string? filterCategory, string? viewKey = null)
         {
             DisplayText = text;
             FilterCategory = filterCategory;
+            ViewKey = viewKey;
 
             // Sized explicitly rather than docked - this control lives inside a
             // TopDown FlowLayoutPanel, which positions children itself and doesn't use
