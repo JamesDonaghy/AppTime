@@ -15,6 +15,7 @@ namespace AppTime
 
         private TextBox txtSearch = null!;
         private FlowLayoutPanel libraryFlow = null!;
+        private Label libraryHeading = null!;
         private SidebarItem? selectedSidebarItem;
 
         // Polls every few seconds for whether each app's process is currently running,
@@ -250,10 +251,11 @@ namespace AppTime
 
             var headerRow = new Panel { Dock = DockStyle.Top, Height = 36 };
 
-            var heading = new Label
+            libraryHeading = new Label
             {
                 Text = "YOUR APPLICATIONS",
                 Dock = DockStyle.Fill,
+                AutoEllipsis = true,
                 Font = AppTheme.SectionHeading,
                 ForeColor = AppTheme.TextSecondary,
                 TextAlign = ContentAlignment.MiddleLeft
@@ -275,7 +277,7 @@ namespace AppTime
             // Fill-docked heading added before the Right-docked button, so the button
             // claims its fixed slice on the right and the heading fills the rest -
             // same Fill-then-edge ordering used throughout this layout.
-            headerRow.Controls.Add(heading);
+            headerRow.Controls.Add(libraryHeading);
             headerRow.Controls.Add(btnAddApplication);
 
             libraryFlow = new FlowLayoutPanel
@@ -347,6 +349,12 @@ namespace AppTime
 
             var apps = filtered.OrderBy(a => a.Name).ToList();
 
+            // Small, simple stat line - just a live count and total tracked time for
+            // whatever's currently shown. Not a full history/statistics view yet.
+            libraryHeading.Text = apps.Count == 0
+                ? "YOUR APPLICATIONS"
+                : $"YOUR APPLICATIONS  ·  {apps.Count} {(apps.Count == 1 ? "app" : "apps")}  ·  {FormatTrackedTotal(apps)}";
+
             if (apps.Count == 0)
             {
                 var message = allApps.Count == 0
@@ -380,6 +388,24 @@ namespace AppTime
             // tick - refresh immediately so switching filters or adding/editing an app
             // doesn't show a stale state for a few seconds.
             RefreshRunningStates();
+        }
+
+        private static string FormatTrackedTotal(List<AppEntry> apps)
+        {
+            var total = TimeSpan.Zero;
+            foreach (var app in apps)
+            {
+                total += app.TotalUsageTime;
+            }
+
+            if (total.TotalMinutes < 1)
+            {
+                return "nothing tracked yet";
+            }
+
+            var hours = (int)total.TotalHours;
+            var minutes = total.Minutes;
+            return hours > 0 ? $"{hours}h {minutes}m tracked" : $"{minutes}m tracked";
         }
 
         private void TrackRunningApplications()
