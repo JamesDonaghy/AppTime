@@ -19,6 +19,7 @@ namespace AppTime
         private SidebarItem? selectedSidebarItem;
         private Panel libraryPanel = null!;
         private Panel overviewPanel = null!;
+        private TableLayoutPanel overviewRecentTable = null!;
         private Panel usagePanel = null!;
         private Panel historyPanel = null!;
 
@@ -224,16 +225,42 @@ namespace AppTime
             return panel;
         }
 
+        // Number of columns in the Recent/Most Used grid - also how many apps are shown.
+        private const int RecentAppsColumnCount = 5;
+
         private Panel BuildOverviewPanel()
         {
-            // Just a placeholder for now - enough for Overview to exist as a real
-            // navigation destination. The actual dashboard content is a later task.
+            // Rough first pass at the real Overview layout - a row of stat cards, a
+            // Recent/Most Used row reusing the existing AppCard, and an empty
+            // placeholder for where the Usage Today chart will go. "Today / This
+            // Week / Sessions" are just dashes for now since there's no per-day or
+            // per-session tracking yet - that's a bigger feature on its own.
+            //
+            // A single-column TableLayoutPanel stacks the sections top to bottom -
+            // each row is Dock=Top full width, so the stat cards, recent apps grid
+            // and usage placeholder all line up to the same width automatically.
             var panel = new Panel
             {
                 Dock = DockStyle.Fill,
                 BackColor = AppTheme.Background,
                 Padding = new Padding(28, 16, 28, 20)
             };
+
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 6,
+                AutoScroll = true,
+                BackColor = AppTheme.Background
+            };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 114f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 154f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160f));
 
             var heading = new Label
             {
@@ -242,9 +269,158 @@ namespace AppTime
                 Font = AppTheme.SectionHeading,
                 ForeColor = AppTheme.TextSecondary
             };
-            panel.Controls.Add(heading);
+            layout.Controls.Add(heading, 0, 0);
+
+            var statsTable = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 90,
+                ColumnCount = 3,
+                RowCount = 1
+            };
+            statsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            AddStatCard(statsTable, "Today", "—", 0, 3);
+            AddStatCard(statsTable, "This Week", "—", 1, 3);
+            AddStatCard(statsTable, "Sessions", "—", 2, 3);
+            layout.Controls.Add(statsTable, 0, 1);
+
+            var recentHeading = new Label
+            {
+                Text = "Recent / Most Used",
+                AutoSize = true,
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextSecondary
+            };
+            layout.Controls.Add(recentHeading, 0, 2);
+
+            overviewRecentTable = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 130,
+                ColumnCount = RecentAppsColumnCount,
+                RowCount = 1
+            };
+            for (var i = 0; i < RecentAppsColumnCount; i++)
+            {
+                overviewRecentTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / RecentAppsColumnCount));
+            }
+            overviewRecentTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            layout.Controls.Add(overviewRecentTable, 0, 3);
+
+            var usageHeading = new Label
+            {
+                Text = "Usage Today",
+                AutoSize = true,
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextSecondary
+            };
+            layout.Controls.Add(usageHeading, 0, 4);
+
+            var usagePlaceholder = new RoundedPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 140
+            };
+            usagePlaceholder.Controls.Add(new Label
+            {
+                Text = "Your usage for today will appear here once you've tracked some application time.",
+                AutoSize = true,
+                MaximumSize = new Size(420, 0),
+                Location = new Point(16, 16),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            });
+            layout.Controls.Add(usagePlaceholder, 0, 5);
+
+            panel.Controls.Add(layout);
+
+            PopulateOverviewRecentApps();
 
             return panel;
+        }
+
+        // Adds a stat card to the given cell, with a small gap to its neighbours
+        // (none on the outer edges) so the row lines up flush with the section above.
+        private void AddStatCard(TableLayoutPanel table, string label, string value, int column, int columnCount)
+        {
+            var card = BuildStatCard(label, value);
+            card.Dock = DockStyle.Fill;
+            card.Margin = GridCellMargin(column, columnCount, gap: 16);
+            table.Controls.Add(card, column, 0);
+        }
+
+        private static Padding GridCellMargin(int column, int columnCount, int gap)
+        {
+            var left = column == 0 ? 0 : gap / 2;
+            var right = column == columnCount - 1 ? 0 : gap / 2;
+            return new Padding(left, 0, right, 0);
+        }
+
+        private Panel BuildStatCard(string label, string value)
+        {
+            var card = new RoundedPanel();
+
+            card.Controls.Add(new Label
+            {
+                Text = label,
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            card.Controls.Add(new Label
+            {
+                Text = value,
+                AutoSize = true,
+                Location = new Point(16, 38),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            return card;
+        }
+
+        // Rebuilds the Recent/Most Used row from scratch, same pattern as ApplyFilter
+        // rebuilding libraryFlow. Simpler than diffing the existing cards.
+        private void PopulateOverviewRecentApps()
+        {
+            overviewRecentTable.Controls.Clear();
+
+            var topApps = allApps.OrderByDescending(a => a.TotalUsageTime).Take(RecentAppsColumnCount).ToList();
+
+            if (topApps.Count == 0)
+            {
+                overviewRecentTable.Controls.Add(new Label
+                {
+                    Text = "No usage tracked yet.",
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary
+                }, 0, 0);
+            }
+            else
+            {
+                for (var i = 0; i < topApps.Count; i++)
+                {
+                    var app = topApps[i];
+                    var card = new AppCard(app)
+                    {
+                        Dock = DockStyle.Fill,
+                        Margin = GridCellMargin(i, RecentAppsColumnCount, gap: 16)
+                    };
+                    card.LaunchRequested += (_, _) => LaunchApplication(app);
+                    card.EditRequested += (_, _) => EditApplication(app);
+                    card.RemoveRequested += (_, _) => RemoveApplication(app);
+                    overviewRecentTable.Controls.Add(card, i, 0);
+                }
+            }
+
+            RefreshRunningStates();
         }
 
         private Panel BuildSidebar()
@@ -348,6 +524,12 @@ namespace AppTime
                 overviewPanel.Visible = clicked.ViewKey == "Overview";
                 usagePanel.Visible = clicked.ViewKey == "Usage";
                 historyPanel.Visible = clicked.ViewKey == "History";
+
+                if (clicked.ViewKey == "Overview")
+                {
+                    PopulateOverviewRecentApps();
+                }
+
                 return;
             }
 
@@ -566,7 +748,13 @@ namespace AppTime
 
         private void RefreshRunningStates()
         {
-            foreach (Control control in libraryFlow.Controls)
+            RefreshRunningStates(libraryFlow.Controls);
+            RefreshRunningStates(overviewRecentTable.Controls);
+        }
+
+        private void RefreshRunningStates(Control.ControlCollection controls)
+        {
+            foreach (Control control in controls)
             {
                 if (control is AppCard card)
                 {
