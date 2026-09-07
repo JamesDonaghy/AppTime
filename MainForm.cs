@@ -11,6 +11,7 @@ namespace AppTime
     public class MainForm : Form
     {
         private readonly List<AppEntry> allApps;
+        private readonly List<AppSession> sessions;
         private readonly List<SidebarItem> sidebarItems = new();
 
         private TextBox txtSearch = null!;
@@ -29,6 +30,11 @@ namespace AppTime
         private readonly System.Windows.Forms.Timer runningCheckTimer;
         private DateTime lastRunningCheckTime;
 
+        // Tracks apps currently mid-session (running as of the last tick) and when
+        // that session started, so a session record can be created once the app
+        // stops running. Keyed by AppEntry.Id.
+        private readonly Dictionary<Guid, DateTime> activeSessionStarts = new();
+
         // Usage time is saved every few ticks rather than on every single one, so a
         // library with something open for hours doesn't rewrite the file every 3
         // seconds. Anything not yet flushed is still saved when the app closes.
@@ -38,6 +44,7 @@ namespace AppTime
         public MainForm()
         {
             allApps = LibraryStorage.LoadLibrary();
+            sessions = SessionStorage.LoadSessions();
 
             Text = "AppTime";
             BackColor = AppTheme.Background;
@@ -73,6 +80,20 @@ namespace AppTime
                 // AppTime right after using something doesn't lose that last stretch
                 // of usage time.
                 LibraryStorage.SaveLibrary(allApps);
+
+                // Close out any sessions still in progress - we can't observe them
+                // past this point anyway, so ending them now (rather than losing them)
+                // is the honest-enough approach.
+                if (activeSessionStarts.Count > 0)
+                {
+                    var closedAt = DateTime.Now;
+                    foreach (var (appId, startTime) in activeSessionStarts)
+                    {
+                        sessions.Add(new AppSession { AppId = appId, StartTime = startTime, EndTime = closedAt });
+                    }
+                    activeSessionStarts.Clear();
+                    SessionStorage.SaveSessions(sessions);
+                }
             };
         }
 
@@ -724,17 +745,33 @@ namespace AppTime
             }
 
             var anyRunning = false;
+            var sessionsChanged = false;
 
             foreach (var app in allApps)
             {
-                if (!IsProcessRunning(app))
-                {
-                    continue;
-                }
+                var running = IsProcessRunning(app);
 
-                app.TotalUsageTime += elapsed;
-                app.LastUsed = now;
-                anyRunning = true;
+                if (running)
+                {
+                    if (!activeSessionStarts.ContainsKey(app.Id))
+                    {
+                        // First tick we've seen this app running since it was last
+                        // stopped - this is the start of a new session.
+                        activeSessionStarts[app.Id] = now;
+                    }
+
+                    app.TotalUsageTime += elapsed;
+                    app.LastUsed = now;
+                    anyRunning = true;
+                }
+                else if (activeSessionStarts.TryGetValue(app.Id, out var startTime))
+                {
+                    // Was running as of the last tick and isn't anymore - the session
+                    // just ended.
+                    sessions.Add(new AppSession { AppId = app.Id, StartTime = startTime, EndTime = now });
+                    activeSessionStarts.Remove(app.Id);
+                    sessionsChanged = true;
+                }
             }
 
             // Only worth saving if something was actually running, and only every few
@@ -743,6 +780,14 @@ namespace AppTime
             {
                 LibraryStorage.SaveLibrary(allApps);
                 ticksSinceLastSave = 0;
+            }
+
+            // Session records are saved as soon as one ends, rather than batched like
+            // the usage total above - session-end events are already infrequent
+            // (unlike per-tick accumulation), so there's no need to delay saving them.
+            if (sessionsChanged)
+            {
+                SessionStorage.SaveSessions(sessions);
             }
         }
 
@@ -856,6 +901,7 @@ namespace AppTime
             }
 
             allApps.Remove(app);
+            activeSessionStarts.Remove(app.Id);
             LibraryStorage.SaveLibrary(allApps);
             ApplyFilter();
         }
