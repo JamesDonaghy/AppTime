@@ -24,6 +24,7 @@ namespace AppTime
         private Label overviewSessionsValueLabel = null!;
         private Panel usagePanel = null!;
         private Panel historyPanel = null!;
+        private TableLayoutPanel historyTable = null!;
 
         // Polls every few seconds for whether each app's process is currently running,
         // and accumulates usage time while it is. A WinForms Timer ticks on the UI
@@ -201,7 +202,7 @@ namespace AppTime
             usagePanel = BuildPlaceholderPanel("Usage");
             usagePanel.Visible = false;
 
-            historyPanel = BuildPlaceholderPanel("History");
+            historyPanel = BuildHistoryPanel();
             historyPanel.Visible = false;
 
             container.Controls.Add(libraryPanel);
@@ -245,6 +246,150 @@ namespace AppTime
             panel.Controls.Add(subtext);
 
             return panel;
+        }
+
+        private Panel BuildHistoryPanel()
+        {
+            // Same header-row-plus-scrollable-area shell as BuildLibraryArea, just
+            // with a grid of session rows instead of app cards.
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = AppTheme.Background,
+                Padding = new Padding(28, 16, 28, 20)
+            };
+
+            var headerRow = new Panel { Dock = DockStyle.Top, Height = 36 };
+
+            var heading = new Label
+            {
+                Text = "History",
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true,
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextSecondary,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            headerRow.Controls.Add(heading);
+
+            historyTable = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                AutoScroll = true,
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            historyTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            // Fill-docked table added before the Top-docked header row - same ordering
+            // as BuildLibraryArea, so the header claims the top and the table fills
+            // what's left below it.
+            panel.Controls.Add(historyTable);
+            panel.Controls.Add(headerRow);
+
+            PopulateHistory();
+
+            return panel;
+        }
+
+        // Rebuilds the session list from scratch, grouped by day (most recent day
+        // first, most recent session first within a day) - same rebuild-don't-diff
+        // approach used elsewhere (ApplyFilter, PopulateOverviewRecentApps).
+        private void PopulateHistory()
+        {
+            historyTable.Controls.Clear();
+            historyTable.RowStyles.Clear();
+            historyTable.RowCount = 0;
+
+            if (sessions.Count == 0)
+            {
+                historyTable.RowCount = 1;
+                historyTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 32f));
+                historyTable.Controls.Add(new Label
+                {
+                    Text = "No sessions recorded yet.",
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary
+                }, 0, 0);
+                return;
+            }
+
+            var today = DateTime.Today;
+            var rowIndex = 0;
+
+            var groups = sessions.GroupBy(s => s.StartTime.Date).OrderByDescending(g => g.Key);
+
+            foreach (var group in groups)
+            {
+                var groupLabel = group.Key == today
+                    ? "Today"
+                    : group.Key == today.AddDays(-1)
+                        ? "Yesterday"
+                        : group.Key.ToString("ddd, dd MMM");
+
+                historyTable.RowCount = rowIndex + 1;
+                historyTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+                historyTable.Controls.Add(new Label
+                {
+                    Text = groupLabel,
+                    AutoSize = true,
+                    Font = AppTheme.SectionHeading,
+                    ForeColor = AppTheme.TextSecondary
+                }, 0, rowIndex);
+                rowIndex++;
+
+                foreach (var session in group.OrderByDescending(s => s.StartTime))
+                {
+                    historyTable.RowCount = rowIndex + 1;
+                    historyTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 64f));
+                    var row = BuildHistoryRow(session);
+                    row.Dock = DockStyle.Fill;
+                    historyTable.Controls.Add(row, 0, rowIndex);
+                    rowIndex++;
+                }
+            }
+        }
+
+        private Panel BuildHistoryRow(AppSession session)
+        {
+            var appName = allApps.FirstOrDefault(a => a.Id == session.AppId)?.Name ?? "Removed app";
+            var duration = FormatDuration(session.EndTime - session.StartTime);
+            var timeRange = $"{session.StartTime:HH:mm} - {session.EndTime:HH:mm}";
+
+            var row = new Panel();
+
+            row.Controls.Add(new Label
+            {
+                Text = $"{appName}  ·  {duration}",
+                AutoSize = true,
+                Location = new Point(0, 4),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            row.Controls.Add(new Label
+            {
+                Text = timeRange,
+                AutoSize = true,
+                Location = new Point(0, 28),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            return row;
+        }
+
+        private static string FormatDuration(TimeSpan duration)
+        {
+            if (duration.TotalMinutes < 1)
+            {
+                return "<1m";
+            }
+
+            var hours = (int)duration.TotalHours;
+            var minutes = duration.Minutes;
+            return hours > 0 ? $"{hours}h {minutes}m" : $"{minutes}m";
         }
 
         // Number of columns in the Recent/Most Used grid - also how many apps are shown.
@@ -378,12 +523,24 @@ namespace AppTime
         // The Sessions card needs its value updated later (real data, refreshed each
         // time Overview is opened) rather than being fixed at build time like the
         // other two, so it keeps hold of the value label via overviewSessionsValueLabel.
+        // It's also the only stat card that's clickable for now, since it's the only
+        // one with somewhere to go - the History view.
         private void AddSessionsStatCard(TableLayoutPanel table, int column, int columnCount)
         {
             var card = BuildStatCard("Sessions", "—", out var valueLabel);
             overviewSessionsValueLabel = valueLabel;
             card.Dock = DockStyle.Fill;
             card.Margin = GridCellMargin(column, columnCount, gap: 16);
+            card.Cursor = Cursors.Hand;
+
+            void GoToHistory(object? _, EventArgs __) => NavigateToViewKey("History");
+            card.Click += GoToHistory;
+            foreach (Control child in card.Controls)
+            {
+                child.Cursor = Cursors.Hand;
+                child.Click += GoToHistory;
+            }
+
             table.Controls.Add(card, column, 0);
 
             UpdateOverviewSessionsCard();
@@ -552,30 +709,40 @@ namespace AppTime
 
         private void SidebarItem_Click(object? sender, EventArgs e)
         {
-            if (sender is not SidebarItem clicked)
+            if (sender is SidebarItem clicked)
             {
-                return;
+                SelectSidebarItem(clicked);
             }
+        }
 
+        // Used by the sidebar click handler above, and by anything else that needs to
+        // jump straight to a nav destination (e.g. clicking the Sessions stat card).
+        private void SelectSidebarItem(SidebarItem item)
+        {
             if (selectedSidebarItem is not null)
             {
                 selectedSidebarItem.IsSelected = false;
             }
 
-            clicked.IsSelected = true;
-            selectedSidebarItem = clicked;
+            item.IsSelected = true;
+            selectedSidebarItem = item;
 
-            if (clicked.ViewKey is not null)
+            if (item.ViewKey is not null)
             {
                 libraryPanel.Visible = false;
-                overviewPanel.Visible = clicked.ViewKey == "Overview";
-                usagePanel.Visible = clicked.ViewKey == "Usage";
-                historyPanel.Visible = clicked.ViewKey == "History";
+                overviewPanel.Visible = item.ViewKey == "Overview";
+                usagePanel.Visible = item.ViewKey == "Usage";
+                historyPanel.Visible = item.ViewKey == "History";
 
-                if (clicked.ViewKey == "Overview")
+                if (item.ViewKey == "Overview")
                 {
                     PopulateOverviewRecentApps();
                     UpdateOverviewSessionsCard();
+                }
+
+                if (item.ViewKey == "History")
+                {
+                    PopulateHistory();
                 }
 
                 return;
@@ -586,6 +753,15 @@ namespace AppTime
             historyPanel.Visible = false;
             libraryPanel.Visible = true;
             ApplyFilter();
+        }
+
+        private void NavigateToViewKey(string viewKey)
+        {
+            var item = sidebarItems.FirstOrDefault(i => i.ViewKey == viewKey);
+            if (item is not null)
+            {
+                SelectSidebarItem(item);
+            }
         }
 
         private Panel BuildLibraryArea()
