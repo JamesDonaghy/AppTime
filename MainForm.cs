@@ -21,6 +21,7 @@ namespace AppTime
         private Panel libraryPanel = null!;
         private Panel overviewPanel = null!;
         private TableLayoutPanel overviewRecentTable = null!;
+        private Label overviewSessionsValueLabel = null!;
         private Panel usagePanel = null!;
         private Panel historyPanel = null!;
 
@@ -306,7 +307,7 @@ namespace AppTime
 
             AddStatCard(statsTable, "Today", "—", 0, 3);
             AddStatCard(statsTable, "This Week", "—", 1, 3);
-            AddStatCard(statsTable, "Sessions", "—", 2, 3);
+            AddSessionsStatCard(statsTable, 2, 3);
             layout.Controls.Add(statsTable, 0, 1);
 
             var recentHeading = new Label
@@ -368,10 +369,34 @@ namespace AppTime
         // (none on the outer edges) so the row lines up flush with the section above.
         private void AddStatCard(TableLayoutPanel table, string label, string value, int column, int columnCount)
         {
-            var card = BuildStatCard(label, value);
+            var card = BuildStatCard(label, value, out _);
             card.Dock = DockStyle.Fill;
             card.Margin = GridCellMargin(column, columnCount, gap: 16);
             table.Controls.Add(card, column, 0);
+        }
+
+        // The Sessions card needs its value updated later (real data, refreshed each
+        // time Overview is opened) rather than being fixed at build time like the
+        // other two, so it keeps hold of the value label via overviewSessionsValueLabel.
+        private void AddSessionsStatCard(TableLayoutPanel table, int column, int columnCount)
+        {
+            var card = BuildStatCard("Sessions", "—", out var valueLabel);
+            overviewSessionsValueLabel = valueLabel;
+            card.Dock = DockStyle.Fill;
+            card.Margin = GridCellMargin(column, columnCount, gap: 16);
+            table.Controls.Add(card, column, 0);
+
+            UpdateOverviewSessionsCard();
+        }
+
+        // Counts completed sessions that started today. A session still in progress
+        // (app currently open) isn't in the sessions list yet - see
+        // activeSessionStarts - so it won't count until it ends. Good enough for now.
+        private void UpdateOverviewSessionsCard()
+        {
+            var today = DateTime.Today;
+            var sessionsToday = sessions.Count(s => s.StartTime.Date == today);
+            overviewSessionsValueLabel.Text = sessionsToday.ToString();
         }
 
         private static Padding GridCellMargin(int column, int columnCount, int gap)
@@ -381,7 +406,7 @@ namespace AppTime
             return new Padding(left, 0, right, 0);
         }
 
-        private Panel BuildStatCard(string label, string value)
+        private Panel BuildStatCard(string label, string value, out Label valueLabel)
         {
             var card = new RoundedPanel();
 
@@ -394,14 +419,15 @@ namespace AppTime
                 ForeColor = AppTheme.TextSecondary
             });
 
-            card.Controls.Add(new Label
+            valueLabel = new Label
             {
                 Text = value,
                 AutoSize = true,
                 Location = new Point(16, 38),
                 Font = AppTheme.CardTitle,
                 ForeColor = AppTheme.TextPrimary
-            });
+            };
+            card.Controls.Add(valueLabel);
 
             return card;
         }
@@ -549,6 +575,7 @@ namespace AppTime
                 if (clicked.ViewKey == "Overview")
                 {
                     PopulateOverviewRecentApps();
+                    UpdateOverviewSessionsCard();
                 }
 
                 return;
