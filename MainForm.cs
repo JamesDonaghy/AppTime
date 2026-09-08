@@ -22,9 +22,12 @@ namespace AppTime
         private Panel overviewPanel = null!;
         private TableLayoutPanel overviewRecentTable = null!;
         private Label overviewSessionsValueLabel = null!;
+        private Label overviewTodayValueLabel = null!;
+        private Label overviewThisWeekValueLabel = null!;
         private Panel usagePanel = null!;
         private Panel historyPanel = null!;
         private TableLayoutPanel historyTable = null!;
+        private UsageTodayChart usageChart = null!;
 
         // Polls every few seconds for whether each app's process is currently running,
         // and accumulates usage time while it is. A WinForms Timer ticks on the UI
@@ -382,6 +385,11 @@ namespace AppTime
 
         private static string FormatDuration(TimeSpan duration)
         {
+            if (duration <= TimeSpan.Zero)
+            {
+                return "0m";
+            }
+
             if (duration.TotalMinutes < 1)
             {
                 return "<1m";
@@ -397,15 +405,12 @@ namespace AppTime
 
         private Panel BuildOverviewPanel()
         {
-            // Rough first pass at the real Overview layout - a row of stat cards, a
-            // Recent/Most Used row reusing the existing AppCard, and an empty
-            // placeholder for where the Usage Today chart will go. "Today / This
-            // Week / Sessions" are just dashes for now since there's no per-day or
-            // per-session tracking yet - that's a bigger feature on its own.
+            // Overview layout - a row of stat cards, a Recent/Most Used row reusing
+            // the existing AppCard, and a basic bar chart of today's usage per app.
             //
             // A single-column TableLayoutPanel stacks the sections top to bottom -
             // each row is Dock=Top full width, so the stat cards, recent apps grid
-            // and usage placeholder all line up to the same width automatically.
+            // and usage chart all line up to the same width automatically.
             var panel = new Panel
             {
                 Dock = DockStyle.Fill,
@@ -450,8 +455,8 @@ namespace AppTime
             statsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
             statsTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
-            AddStatCard(statsTable, "Today", "—", 0, 3);
-            AddStatCard(statsTable, "This Week", "—", 1, 3);
+            AddStatCard(statsTable, "Today", "—", 0, 3, out overviewTodayValueLabel);
+            AddStatCard(statsTable, "This Week", "—", 1, 3, out overviewThisWeekValueLabel);
             AddSessionsStatCard(statsTable, 2, 3);
             layout.Controls.Add(statsTable, 0, 1);
 
@@ -487,34 +492,32 @@ namespace AppTime
             };
             layout.Controls.Add(usageHeading, 0, 4);
 
-            var usagePlaceholder = new RoundedPanel
+            var usageChartCard = new RoundedPanel
             {
                 Dock = DockStyle.Top,
-                Height = 140
+                Height = 140,
+                Padding = new Padding(4)
             };
-            usagePlaceholder.Controls.Add(new Label
-            {
-                Text = "Your usage for today will appear here once you've tracked some application time.",
-                AutoSize = true,
-                MaximumSize = new Size(420, 0),
-                Location = new Point(16, 16),
-                Font = AppTheme.Base,
-                ForeColor = AppTheme.TextSecondary
-            });
-            layout.Controls.Add(usagePlaceholder, 0, 5);
+            usageChart = new UsageTodayChart { Dock = DockStyle.Fill };
+            usageChartCard.Controls.Add(usageChart);
+            layout.Controls.Add(usageChartCard, 0, 5);
 
             panel.Controls.Add(layout);
 
             PopulateOverviewRecentApps();
+            UpdateOverviewTodayCard();
+            UpdateOverviewThisWeekCard();
+            UpdateUsageTodayChart();
 
             return panel;
         }
 
         // Adds a stat card to the given cell, with a small gap to its neighbours
         // (none on the outer edges) so the row lines up flush with the section above.
-        private void AddStatCard(TableLayoutPanel table, string label, string value, int column, int columnCount)
+        // Callers keep the value label so its text can be refreshed with real data later.
+        private void AddStatCard(TableLayoutPanel table, string label, string value, int column, int columnCount, out Label valueLabel)
         {
-            var card = BuildStatCard(label, value, out _);
+            var card = BuildStatCard(label, value, out valueLabel);
             card.Dock = DockStyle.Fill;
             card.Margin = GridCellMargin(column, columnCount, gap: 16);
             table.Controls.Add(card, column, 0);
@@ -554,6 +557,59 @@ namespace AppTime
             var today = DateTime.Today;
             var sessionsToday = sessions.Count(s => s.StartTime.Date == today);
             overviewSessionsValueLabel.Text = sessionsToday.ToString();
+        }
+
+        private void UpdateOverviewTodayCard()
+        {
+            var today = DateTime.Today;
+            var totalToday = SumSessionDurations(s => s.StartTime.Date == today);
+            overviewTodayValueLabel.Text = FormatDuration(totalToday);
+        }
+
+        private void UpdateOverviewThisWeekCard()
+        {
+            var weekStart = StartOfWeek(DateTime.Today);
+            var totalThisWeek = SumSessionDurations(s => s.StartTime.Date >= weekStart);
+            overviewThisWeekValueLabel.Text = FormatDuration(totalThisWeek);
+        }
+
+        // Sums each app's completed sessions from today, one bar per app, sorted
+        // biggest first. Same "completed sessions only" caveat as the other cards -
+        // an app still running right now won't show up until it's closed.
+        private void UpdateUsageTodayChart()
+        {
+            var today = DateTime.Today;
+
+            var usageByApp = sessions
+                .Where(s => s.StartTime.Date == today)
+                .GroupBy(s => s.AppId)
+                .Select(g => (
+                    Name: allApps.FirstOrDefault(a => a.Id == g.Key)?.Name ?? "Removed app",
+                    Duration: TimeSpan.FromTicks(g.Sum(s => (s.EndTime - s.StartTime).Ticks))))
+                .OrderByDescending(u => u.Duration)
+                .ToList();
+
+            usageChart.SetData(usageByApp);
+        }
+
+        private TimeSpan SumSessionDurations(Func<AppSession, bool> predicate)
+        {
+            var total = TimeSpan.Zero;
+            foreach (var session in sessions)
+            {
+                if (predicate(session))
+                {
+                    total += session.EndTime - session.StartTime;
+                }
+            }
+            return total;
+        }
+
+        // Monday as the start of the week.
+        private static DateTime StartOfWeek(DateTime date)
+        {
+            var daysSinceMonday = ((int)date.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+            return date.AddDays(-daysSinceMonday).Date;
         }
 
         private static Padding GridCellMargin(int column, int columnCount, int gap)
@@ -738,6 +794,9 @@ namespace AppTime
                 {
                     PopulateOverviewRecentApps();
                     UpdateOverviewSessionsCard();
+                    UpdateOverviewTodayCard();
+                    UpdateOverviewThisWeekCard();
+                    UpdateUsageTodayChart();
                 }
 
                 if (item.ViewKey == "History")
