@@ -29,9 +29,17 @@ namespace AppTime
         private TableLayoutPanel historyTable = null!;
         private UsageTodayChart usageChart = null!;
         private Panel detailsPanel = null!;
+        private AppEntry? currentDetailsApp;
+        private Label detailsBackLink = null!;
         private Label detailsNameLabel = null!;
-        private Label detailsCategoryLabel = null!;
-        private Label detailsUsageLabel = null!;
+        private Label detailsCategoryPill = null!;
+        private Label detailsUsageValueLabel = null!;
+        private Label detailsNameValueLabel = null!;
+        private Label detailsCategoryValueLabel = null!;
+        private Label detailsTrackedTimeValueLabel = null!;
+        private Button detailsActionButton = null!;
+        private bool detailsActionButtonHovered;
+        private TableLayoutPanel detailsSessionsTable = null!;
 
         // Polls every few seconds for whether each app's process is currently running,
         // and accumulates usage time while it is. A WinForms Timer ticks on the UI
@@ -259,10 +267,11 @@ namespace AppTime
             return panel;
         }
 
-        // Bare-bones details view for a single app - just name, category and total
-        // tracked time for now. Not part of the sidebar nav, so it doesn't touch
-        // selectedSidebarItem; "Back" just re-shows whatever that item was already
-        // pointing at.
+        // Details view for a single app: name/category/tracked-time summary, an
+        // "Application Details" info box and an "Actions" box (launch), then that
+        // app's own session history below. Not part of the sidebar nav, so it doesn't
+        // touch selectedSidebarItem; "Back" just re-shows whatever that item was
+        // already pointing at.
         private Panel BuildDetailsPanel()
         {
             var panel = new Panel
@@ -272,59 +281,309 @@ namespace AppTime
                 Padding = new Padding(28, 16, 28, 20)
             };
 
-            var backLink = new Label
+            // The summary header, the details/actions boxes, and the "Session
+            // History" heading are three fixed-height rows stacked via explicit
+            // (column, row) placement - avoids relying on Dock ordering among
+            // multiple Top-docked siblings, which gets ambiguous with more than one.
+            var topSection = new TableLayoutPanel
             {
-                Text = "← Back",
+                Dock = DockStyle.Top,
+                Height = 124 + 196 + 44,
+                ColumnCount = 1,
+                RowCount = 3
+            };
+            topSection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 124f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 196f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 44f));
+
+            topSection.Controls.Add(BuildDetailsSummary(), 0, 0);
+            topSection.Controls.Add(BuildDetailsBoxesRow(), 0, 1);
+
+            var sessionsHeading = new Label
+            {
+                Text = "Session History",
+                AutoSize = true,
+                Margin = new Padding(0, 8, 0, 0),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextSecondary
+            };
+            topSection.Controls.Add(sessionsHeading, 0, 2);
+
+            detailsSessionsTable = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                AutoScroll = true,
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            detailsSessionsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            // Fill-docked table added before the Top-docked section - same ordering as
+            // BuildLibraryArea/BuildHistoryPanel.
+            panel.Controls.Add(detailsSessionsTable);
+            panel.Controls.Add(topSection);
+
+            return panel;
+        }
+
+        // Back link, app name, category "pill", and the tracked-time line.
+        private Panel BuildDetailsSummary()
+        {
+            var summary = new Panel { Dock = DockStyle.Fill };
+
+            detailsBackLink = new Label
+            {
                 AutoSize = true,
                 Cursor = Cursors.Hand,
                 Location = new Point(0, 0),
                 Font = AppTheme.Base,
                 ForeColor = AppTheme.Accent
             };
-            backLink.Click += (_, _) =>
+            detailsBackLink.Click += (_, _) =>
             {
                 if (selectedSidebarItem is not null)
                 {
                     SelectSidebarItem(selectedSidebarItem);
                 }
             };
-            panel.Controls.Add(backLink);
+            summary.Controls.Add(detailsBackLink);
 
             detailsNameLabel = new Label
             {
                 AutoSize = true,
-                Location = new Point(0, 32),
-                Font = AppTheme.SectionHeading,
+                Location = new Point(0, 26),
+                Font = AppTheme.Heading,
                 ForeColor = AppTheme.TextPrimary
             };
-            panel.Controls.Add(detailsNameLabel);
+            summary.Controls.Add(detailsNameLabel);
 
-            detailsCategoryLabel = new Label
+            // Category "pill" - square corners for now (a plain Label with padded
+            // background), rather than a fully rounded badge - close enough for this
+            // pass, can be polished later the same way the app cards were.
+            detailsCategoryPill = new Label
             {
                 AutoSize = true,
-                Location = new Point(0, 64),
-                Font = AppTheme.SmallText,
-                ForeColor = AppTheme.TextSecondary
+                Location = new Point(0, 58),
+                Font = new Font(AppTheme.SmallText, FontStyle.Bold),
+                ForeColor = AppTheme.Accent,
+                BackColor = AppTheme.AccentSubtle,
+                Padding = new Padding(8, 3, 8, 3)
             };
-            panel.Controls.Add(detailsCategoryLabel);
+            summary.Controls.Add(detailsCategoryPill);
 
-            detailsUsageLabel = new Label
+            var usageRow = new FlowLayoutPanel
             {
+                FlowDirection = FlowDirection.LeftToRight,
                 AutoSize = true,
-                Location = new Point(0, 88),
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                Location = new Point(0, 92)
+            };
+            usageRow.Controls.Add(new Label
+            {
+                Text = "Total tracked time",
+                AutoSize = true,
+                Margin = new Padding(0, 3, 6, 0),
                 Font = AppTheme.Base,
                 ForeColor = AppTheme.TextSecondary
+            });
+            detailsUsageValueLabel = new Label
+            {
+                AutoSize = true,
+                Margin = new Padding(0),
+                Font = new Font(AppTheme.Base, FontStyle.Bold),
+                ForeColor = AppTheme.TextPrimary
             };
-            panel.Controls.Add(detailsUsageLabel);
+            usageRow.Controls.Add(detailsUsageValueLabel);
+            summary.Controls.Add(usageRow);
 
-            return panel;
+            return summary;
+        }
+
+        private TableLayoutPanel BuildDetailsBoxesRow()
+        {
+            var boxesRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            boxesRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62f));
+            boxesRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38f));
+            boxesRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            var infoBox = BuildDetailsInfoBox();
+            infoBox.Dock = DockStyle.Fill;
+            infoBox.Margin = new Padding(0, 0, 8, 0);
+            boxesRow.Controls.Add(infoBox, 0, 0);
+
+            var actionsBox = BuildDetailsActionsBox();
+            actionsBox.Dock = DockStyle.Fill;
+            actionsBox.Margin = new Padding(8, 0, 0, 0);
+            boxesRow.Controls.Add(actionsBox, 1, 0);
+
+            return boxesRow;
+        }
+
+        private RoundedPanel BuildDetailsInfoBox()
+        {
+            var box = new RoundedPanel();
+
+            box.Controls.Add(new Label
+            {
+                Text = "Application Details",
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            detailsNameValueLabel = AddDetailRow(box, "Name", 50);
+            detailsCategoryValueLabel = AddDetailRow(box, "Category", 90);
+            detailsTrackedTimeValueLabel = AddDetailRow(box, "Total Tracked Time", 130);
+
+            return box;
+        }
+
+        // One row of the info box: a muted caption, its value to the right, and a
+        // divider line below. Returns the value label so ShowAppDetails can fill it
+        // in for whichever app is currently showing.
+        private Label AddDetailRow(Panel container, string caption, int y)
+        {
+            container.Controls.Add(new Label
+            {
+                Text = caption,
+                AutoSize = true,
+                Location = new Point(16, y),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            var valueLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(180, y),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextPrimary
+            };
+            container.Controls.Add(valueLabel);
+
+            // Fixed width rather than stretching to the box's actual (responsive)
+            // width - good enough for now, same trade-off as the Usage Today chart's
+            // fixed-size placeholder before it became a real chart.
+            container.Controls.Add(new Panel
+            {
+                Location = new Point(16, y + 26),
+                Size = new Size(460, 1),
+                BackColor = AppTheme.Border
+            });
+
+            return valueLabel;
+        }
+
+        private RoundedPanel BuildDetailsActionsBox()
+        {
+            var box = new RoundedPanel();
+
+            box.Controls.Add(new Label
+            {
+                Text = "Actions",
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            // Same Start/Running/Stop behaviour as the button on each AppCard -
+            // green Start by default, blue Running once launched, red Stop on hover.
+            detailsActionButton = new Button
+            {
+                Location = new Point(16, 46),
+                Size = new Size(200, 40),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.White,
+                Font = AppTheme.Base,
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            detailsActionButton.FlatAppearance.BorderSize = 0;
+            detailsActionButton.Click += (_, _) =>
+            {
+                if (currentDetailsApp is null)
+                {
+                    return;
+                }
+
+                if (IsProcessRunning(currentDetailsApp))
+                {
+                    StopApplication(currentDetailsApp);
+                }
+                else
+                {
+                    LaunchApplication(currentDetailsApp);
+                }
+            };
+            detailsActionButton.MouseEnter += (_, _) =>
+            {
+                detailsActionButtonHovered = true;
+                UpdateDetailsActionButtonAppearance();
+            };
+            detailsActionButton.MouseLeave += (_, _) =>
+            {
+                detailsActionButtonHovered = false;
+                UpdateDetailsActionButtonAppearance();
+            };
+            box.Controls.Add(detailsActionButton);
+
+            return box;
+        }
+
+        private void UpdateDetailsActionButtonAppearance()
+        {
+            var isRunning = currentDetailsApp is not null && IsProcessRunning(currentDetailsApp);
+
+            if (!isRunning)
+            {
+                detailsActionButton.Text = "Start";
+                detailsActionButton.BackColor = AppTheme.Success;
+                return;
+            }
+
+            if (detailsActionButtonHovered)
+            {
+                detailsActionButton.Text = "Stop";
+                detailsActionButton.BackColor = AppTheme.Danger;
+            }
+            else
+            {
+                detailsActionButton.Text = "Running";
+                detailsActionButton.BackColor = AppTheme.Accent;
+            }
         }
 
         private void ShowAppDetails(AppEntry app)
         {
+            currentDetailsApp = app;
+
+            detailsBackLink.Text = selectedSidebarItem is not null
+                ? $"← Back to {selectedSidebarItem.DisplayText}"
+                : "← Back";
+
             detailsNameLabel.Text = app.Name;
-            detailsCategoryLabel.Text = app.Category;
-            detailsUsageLabel.Text = $"Total tracked time: {FormatDuration(app.TotalUsageTime)}";
+            detailsCategoryPill.Text = app.Category;
+
+            var trackedTimeText = FormatDuration(app.TotalUsageTime);
+            detailsUsageValueLabel.Text = trackedTimeText;
+
+            detailsNameValueLabel.Text = app.Name;
+            detailsCategoryValueLabel.Text = app.Category;
+            detailsTrackedTimeValueLabel.Text = trackedTimeText;
+
+            UpdateDetailsActionButtonAppearance();
+
+            var appSessions = sessions.Where(s => s.AppId == app.Id);
+            PopulateSessionsTable(detailsSessionsTable, appSessions, "No sessions recorded for this app yet.");
 
             libraryPanel.Visible = false;
             overviewPanel.Visible = false;
@@ -377,22 +636,32 @@ namespace AppTime
             return panel;
         }
 
-        // Rebuilds the session list from scratch, grouped by day (most recent day
+        // Rebuilds the History list from scratch, grouped by day (most recent day
         // first, most recent session first within a day) - same rebuild-don't-diff
         // approach used elsewhere (ApplyFilter, PopulateOverviewRecentApps).
         private void PopulateHistory()
         {
-            historyTable.Controls.Clear();
-            historyTable.RowStyles.Clear();
-            historyTable.RowCount = 0;
+            PopulateSessionsTable(historyTable, sessions, "No sessions recorded yet.");
+        }
 
-            if (sessions.Count == 0)
+        // Shared by History (all sessions) and the app Details view (one app's
+        // sessions) - same grouped-by-day layout either way, just a different source
+        // list and empty-state message.
+        private void PopulateSessionsTable(TableLayoutPanel table, IEnumerable<AppSession> sessionsToShow, string emptyMessage)
+        {
+            table.Controls.Clear();
+            table.RowStyles.Clear();
+            table.RowCount = 0;
+
+            var sessionList = sessionsToShow.ToList();
+
+            if (sessionList.Count == 0)
             {
-                historyTable.RowCount = 1;
-                historyTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 32f));
-                historyTable.Controls.Add(new Label
+                table.RowCount = 1;
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 32f));
+                table.Controls.Add(new Label
                 {
-                    Text = "No sessions recorded yet.",
+                    Text = emptyMessage,
                     AutoSize = true,
                     Font = AppTheme.Base,
                     ForeColor = AppTheme.TextSecondary
@@ -403,7 +672,7 @@ namespace AppTime
             var today = DateTime.Today;
             var rowIndex = 0;
 
-            var groups = sessions.GroupBy(s => s.StartTime.Date).OrderByDescending(g => g.Key);
+            var groups = sessionList.GroupBy(s => s.StartTime.Date).OrderByDescending(g => g.Key);
 
             foreach (var group in groups)
             {
@@ -413,9 +682,9 @@ namespace AppTime
                         ? "Yesterday"
                         : group.Key.ToString("ddd, dd MMM");
 
-                historyTable.RowCount = rowIndex + 1;
-                historyTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-                historyTable.Controls.Add(new Label
+                table.RowCount = rowIndex + 1;
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+                table.Controls.Add(new Label
                 {
                     Text = groupLabel,
                     AutoSize = true,
@@ -426,11 +695,11 @@ namespace AppTime
 
                 foreach (var session in group.OrderByDescending(s => s.StartTime))
                 {
-                    historyTable.RowCount = rowIndex + 1;
-                    historyTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 64f));
+                    table.RowCount = rowIndex + 1;
+                    table.RowStyles.Add(new RowStyle(SizeType.Absolute, 64f));
                     var row = BuildHistoryRow(session);
                     row.Dock = DockStyle.Fill;
-                    historyTable.Controls.Add(row, 0, rowIndex);
+                    table.Controls.Add(row, 0, rowIndex);
                     rowIndex++;
                 }
             }
@@ -873,6 +1142,7 @@ namespace AppTime
                 overviewPanel.Visible = item.ViewKey == "Overview";
                 usagePanel.Visible = item.ViewKey == "Usage";
                 historyPanel.Visible = item.ViewKey == "History";
+                detailsPanel.Visible = false;
 
                 if (item.ViewKey == "Overview")
                 {
@@ -894,6 +1164,7 @@ namespace AppTime
             overviewPanel.Visible = false;
             usagePanel.Visible = false;
             historyPanel.Visible = false;
+            detailsPanel.Visible = false;
             libraryPanel.Visible = true;
             ApplyFilter();
         }
@@ -1143,6 +1414,15 @@ namespace AppTime
         {
             RefreshRunningStates(libraryFlow.Controls);
             RefreshRunningStates(overviewRecentTable.Controls);
+
+            // detailsPanel isn't built yet the first time this runs - Overview (built
+            // before detailsPanel in BuildMainContent) populates its Recent/Most Used
+            // cards during construction, which calls this. Guard rather than reorder
+            // construction, so this stays safe regardless of build order.
+            if (detailsPanel is not null && detailsPanel.Visible)
+            {
+                UpdateDetailsActionButtonAppearance();
+            }
         }
 
         private void RefreshRunningStates(Control.ControlCollection controls)
