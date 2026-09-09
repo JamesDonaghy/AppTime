@@ -28,6 +28,10 @@ namespace AppTime
         private Panel historyPanel = null!;
         private TableLayoutPanel historyTable = null!;
         private UsageTodayChart usageChart = null!;
+        private Panel detailsPanel = null!;
+        private Label detailsNameLabel = null!;
+        private Label detailsCategoryLabel = null!;
+        private Label detailsUsageLabel = null!;
 
         // Polls every few seconds for whether each app's process is currently running,
         // and accumulates usage time while it is. A WinForms Timer ticks on the UI
@@ -208,10 +212,14 @@ namespace AppTime
             historyPanel = BuildHistoryPanel();
             historyPanel.Visible = false;
 
+            detailsPanel = BuildDetailsPanel();
+            detailsPanel.Visible = false;
+
             container.Controls.Add(libraryPanel);
             container.Controls.Add(overviewPanel);
             container.Controls.Add(usagePanel);
             container.Controls.Add(historyPanel);
+            container.Controls.Add(detailsPanel);
 
             return container;
         }
@@ -249,6 +257,80 @@ namespace AppTime
             panel.Controls.Add(subtext);
 
             return panel;
+        }
+
+        // Bare-bones details view for a single app - just name, category and total
+        // tracked time for now. Not part of the sidebar nav, so it doesn't touch
+        // selectedSidebarItem; "Back" just re-shows whatever that item was already
+        // pointing at.
+        private Panel BuildDetailsPanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = AppTheme.Background,
+                Padding = new Padding(28, 16, 28, 20)
+            };
+
+            var backLink = new Label
+            {
+                Text = "← Back",
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                Location = new Point(0, 0),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.Accent
+            };
+            backLink.Click += (_, _) =>
+            {
+                if (selectedSidebarItem is not null)
+                {
+                    SelectSidebarItem(selectedSidebarItem);
+                }
+            };
+            panel.Controls.Add(backLink);
+
+            detailsNameLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(0, 32),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            };
+            panel.Controls.Add(detailsNameLabel);
+
+            detailsCategoryLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(0, 64),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            };
+            panel.Controls.Add(detailsCategoryLabel);
+
+            detailsUsageLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(0, 88),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            };
+            panel.Controls.Add(detailsUsageLabel);
+
+            return panel;
+        }
+
+        private void ShowAppDetails(AppEntry app)
+        {
+            detailsNameLabel.Text = app.Name;
+            detailsCategoryLabel.Text = app.Category;
+            detailsUsageLabel.Text = $"Total tracked time: {FormatDuration(app.TotalUsageTime)}";
+
+            libraryPanel.Visible = false;
+            overviewPanel.Visible = false;
+            usagePanel.Visible = false;
+            historyPanel.Visible = false;
+            detailsPanel.Visible = true;
         }
 
         private Panel BuildHistoryPanel()
@@ -674,8 +756,10 @@ namespace AppTime
                         Margin = GridCellMargin(i, RecentAppsColumnCount, gap: 16)
                     };
                     card.LaunchRequested += (_, _) => LaunchApplication(app);
+                    card.StopRequested += (_, _) => StopApplication(app);
                     card.EditRequested += (_, _) => EditApplication(app);
                     card.RemoveRequested += (_, _) => RemoveApplication(app);
+                    card.DetailsRequested += (_, _) => ShowAppDetails(app);
                     overviewRecentTable.Controls.Add(card, i, 0);
                 }
             }
@@ -959,8 +1043,10 @@ namespace AppTime
                 {
                     var card = new AppCard(app);
                     card.LaunchRequested += (_, _) => LaunchApplication(app);
+                    card.StopRequested += (_, _) => StopApplication(app);
                     card.EditRequested += (_, _) => EditApplication(app);
                     card.RemoveRequested += (_, _) => RemoveApplication(app);
+                    card.DetailsRequested += (_, _) => ShowAppDetails(app);
                     libraryFlow.Controls.Add(card);
                 }
             }
@@ -1124,6 +1210,48 @@ namespace AppTime
             {
                 MessageBox.Show(this, $"Couldn't launch \"{app.Name}\".\n\n{ex.Message}",
                     "Launch failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Same process-name matching as IsProcessRunning - see the comment there.
+        // Best-effort: a process that's already exited, or one we don't have
+        // permission to kill (e.g. elevated), just gets skipped rather than shown as
+        // an error, since the end result the user cares about ("it's stopped") is
+        // usually still true or about to be true either way.
+        private void StopApplication(AppEntry app)
+        {
+            if (string.IsNullOrWhiteSpace(app.ExecutablePath))
+            {
+                return;
+            }
+
+            var processName = Path.GetFileNameWithoutExtension(app.ExecutablePath);
+            if (string.IsNullOrEmpty(processName))
+            {
+                return;
+            }
+
+            var processes = Process.GetProcessesByName(processName);
+            try
+            {
+                foreach (var process in processes)
+                {
+                    try
+                    {
+                        process.Kill();
+                    }
+                    catch (Exception)
+                    {
+                        // Already exited, or access denied - nothing more we can do.
+                    }
+                }
+            }
+            finally
+            {
+                foreach (var process in processes)
+                {
+                    process.Dispose();
+                }
             }
         }
 

@@ -7,21 +7,29 @@ namespace AppTime
 {
     /// A single application tile in the library grid. Owner-drawn (rather than built
     /// from child Label controls) so the rounded card shape, border and hover state can
-    /// all be handled in one place. Double-click launches the application; right-click
-    /// gives "Edit..." and "Remove from Library" options. A small dot and status text
-    /// show whether the app's process is currently detected running.
+    /// all be handled in one place. A single click opens the app's details view;
+    /// right-click gives "Edit..." and "Remove from Library" options. Usage time is
+    /// shown above a Start/Running/Stop button rather than relying on double-click
+    /// (which doesn't play well with the single-click-for-details behaviour above).
     public class AppCard : Panel
     {
         private const int CornerRadius = 10;
+        private const int ContentPadding = 12;
+        private const int ActionButtonHeight = 24;
+        private const int UsageTextHeight = 16;
+        private const int UsageButtonGap = 4;
 
         private bool isHovered;
         private bool isRunning;
+        private bool isActionButtonHovered;
+
+        private readonly Button actionButton;
 
         public AppEntry App { get; }
 
-        // Set by MainForm after each process-detection pass. Only repaints when the
-        // value actually changes, so a timer ticking every few seconds doesn't force a
-        // redraw of every card each time.
+        // Set by MainForm after each process-detection pass. Only updates the button
+        // and repaints when the value actually changes, so a timer ticking every few
+        // seconds doesn't force a redraw of every card each time.
         public bool IsRunning
         {
             get => isRunning;
@@ -33,13 +41,18 @@ namespace AppTime
                 }
 
                 isRunning = value;
+                UpdateActionButtonAppearance();
                 Invalidate();
             }
         }
 
-        // Raised on double-click. MainForm owns the actual Process.Start call - this
-        // control only knows how to ask for it.
+        // Raised when the action button is clicked while not running. MainForm owns
+        // the actual Process.Start call - this control only knows how to ask for it.
         public event EventHandler? LaunchRequested;
+
+        // Raised when the action button is clicked while running (shown as "Stop" on
+        // hover). MainForm owns actually ending the process.
+        public event EventHandler? StopRequested;
 
         // Raised when "Remove from Library" is chosen from the right-click menu.
         // MainForm owns the confirmation prompt and the actual removal.
@@ -49,11 +62,16 @@ namespace AppTime
         // showing the edit dialog and applying the result.
         public event EventHandler? EditRequested;
 
+        // Raised on a single click - MainForm owns navigating to the app's details
+        // view. Clicks on the action button don't bubble up to this (child control
+        // clicks are separate from the parent Panel's own Click event), so this only
+        // fires for clicks elsewhere on the card.
+        public event EventHandler? DetailsRequested;
+
         public AppCard(AppEntry app)
         {
             App = app;
 
-            Size = new Size(168, 118);
             Margin = new Padding(0, 0, 16, 16);
             Cursor = Cursors.Hand;
 
@@ -62,7 +80,52 @@ namespace AppTime
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
 
             MouseEnter += (_, _) => { isHovered = true; Invalidate(); };
-            MouseLeave += (_, _) => { isHovered = false; Invalidate(); };
+            MouseLeave += (_, _) => TryClearCardHover();
+
+            actionButton = new Button
+            {
+                FlatStyle = FlatStyle.Flat,
+                Font = AppTheme.SmallText,
+                ForeColor = Color.White,
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            actionButton.FlatAppearance.BorderSize = 0;
+            actionButton.Click += (_, _) =>
+            {
+                if (isRunning)
+                {
+                    StopRequested?.Invoke(this, EventArgs.Empty);
+                }
+                else
+                {
+                    LaunchRequested?.Invoke(this, EventArgs.Empty);
+                }
+            };
+            actionButton.MouseEnter += (_, _) =>
+            {
+                isActionButtonHovered = true;
+                UpdateActionButtonAppearance();
+
+                // The button is a separate child window, so moving onto it fires this
+                // Panel's own MouseLeave even though the cursor is still visually
+                // within the card - keep the card's hover highlight on to match.
+                isHovered = true;
+                Invalidate();
+            };
+            actionButton.MouseLeave += (_, _) =>
+            {
+                isActionButtonHovered = false;
+                UpdateActionButtonAppearance();
+                TryClearCardHover();
+            };
+            Controls.Add(actionButton);
+            UpdateActionButtonAppearance();
+
+            // Size is set after actionButton exists - assigning Size triggers OnResize
+            // (via SetBoundsCore/UpdateBounds), which calls PositionActionButton() and
+            // would otherwise hit a null reference on actionButton if it ran first.
+            Size = new Size(168, 118);
 
             var editItem = new ToolStripMenuItem("Edit...");
             editItem.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
@@ -77,10 +140,60 @@ namespace AppTime
             ContextMenuStrip = contextMenu;
         }
 
-        protected override void OnDoubleClick(EventArgs e)
+        protected override void OnClick(EventArgs e)
         {
-            base.OnDoubleClick(e);
-            LaunchRequested?.Invoke(this, EventArgs.Empty);
+            base.OnClick(e);
+            DetailsRequested?.Invoke(this, EventArgs.Empty);
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            PositionActionButton();
+        }
+
+        private void PositionActionButton()
+        {
+            actionButton.SetBounds(
+                ContentPadding,
+                Height - ContentPadding - ActionButtonHeight,
+                Math.Max(0, Width - ContentPadding * 2),
+                ActionButtonHeight);
+        }
+
+        // Both this Panel's own MouseLeave and the action button's MouseLeave fire in
+        // cases where the cursor hasn't actually left the card (see comments where
+        // these are wired up) - only clear the hover highlight if it genuinely has.
+        private void TryClearCardHover()
+        {
+            if (ClientRectangle.Contains(PointToClient(Cursor.Position)))
+            {
+                return;
+            }
+
+            isHovered = false;
+            Invalidate();
+        }
+
+        private void UpdateActionButtonAppearance()
+        {
+            if (!isRunning)
+            {
+                actionButton.Text = "Start";
+                actionButton.BackColor = AppTheme.Success;
+                return;
+            }
+
+            if (isActionButtonHovered)
+            {
+                actionButton.Text = "Stop";
+                actionButton.BackColor = AppTheme.Danger;
+            }
+            else
+            {
+                actionButton.Text = "Running";
+                actionButton.BackColor = AppTheme.Accent;
+            }
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -103,8 +216,7 @@ namespace AppTime
                 g.DrawPath(borderPen, path);
             }
 
-            var contentPadding = 12;
-            var contentRect = new Rectangle(contentPadding, contentPadding, Width - contentPadding * 2, Height - contentPadding * 2);
+            var contentRect = new Rectangle(ContentPadding, ContentPadding, Width - ContentPadding * 2, Height - ContentPadding * 2);
 
             // Category, top-left - small and muted so the name reads first.
             TextRenderer.DrawText(g, App.Category, AppTheme.SmallText, contentRect, AppTheme.TextSecondary,
@@ -116,7 +228,8 @@ namespace AppTime
                 TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 
             // Small dot, top-right - whether the app's process is currently running.
-            // Paired with the "Running" text below rather than relying on colour alone.
+            // Paired with the action button's own "Running" state below, rather than
+            // relying on colour alone.
             if (isRunning)
             {
                 const int dotSize = 8;
@@ -125,33 +238,17 @@ namespace AppTime
                 g.FillEllipse(dotBrush, dotRect);
             }
 
-            // Bottom-left: usage time normally, "Running" if the process is currently
-            // detected, or a launch hint while hovered - hover always wins, since
-            // that's the user actively interacting with the card right now.
-            string bottomText;
-            Color bottomColor;
-            if (isHovered)
-            {
-                bottomText = "Double-click to launch";
-                bottomColor = AppTheme.Accent;
-            }
-            else if (isRunning)
-            {
-                bottomText = "Running";
-                bottomColor = AppTheme.Success;
-            }
-            else
-            {
-                bottomText = FormatUsage(App.TotalUsageTime);
-                bottomColor = AppTheme.TextSecondary;
-            }
-
-            var bottomRect = new Rectangle(contentRect.Left, contentRect.Bottom - 16, contentRect.Width, 16);
-            TextRenderer.DrawText(g, bottomText, AppTheme.SmallText, bottomRect, bottomColor,
+            // Usage time, directly above the action button.
+            var usageRect = new Rectangle(
+                contentRect.Left,
+                Height - ContentPadding - ActionButtonHeight - UsageButtonGap - UsageTextHeight,
+                contentRect.Width,
+                UsageTextHeight);
+            TextRenderer.DrawText(g, FormatUsage(App.TotalUsageTime), AppTheme.SmallText, usageRect, AppTheme.TextSecondary,
                 TextFormatFlags.Bottom | TextFormatFlags.Left | TextFormatFlags.NoPadding);
         }
 
-        private static string FormatUsage(System.TimeSpan usage)
+        private static string FormatUsage(TimeSpan usage)
         {
             if (usage.TotalMinutes < 1)
             {

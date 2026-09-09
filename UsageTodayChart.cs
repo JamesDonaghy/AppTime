@@ -12,7 +12,7 @@ namespace AppTime
     /// today's usage at a glance instead of the old "coming soon" placeholder.
     public class UsageTodayChart : Panel
     {
-        private const int Padding = 12;
+        private const int ChartPadding = 12;
         private const int LabelAreaHeight = 34;
         private const int ValueLabelAreaHeight = 18;
         private const int BarGap = 12;
@@ -57,8 +57,8 @@ namespace AppTime
             // Reserve room above the bars for the tallest bar's duration label -
             // without this, a bar at 100% height leaves no space for the text above
             // it and it gets clipped against the top edge.
-            var chartTop = Padding + ValueLabelAreaHeight;
-            var chartAreaHeight = Height - chartTop - Padding - LabelAreaHeight;
+            var chartTop = ChartPadding + ValueLabelAreaHeight;
+            var chartAreaHeight = Height - chartTop - ChartPadding - LabelAreaHeight;
             if (chartAreaHeight <= 0)
             {
                 return;
@@ -67,11 +67,11 @@ namespace AppTime
             var maxSeconds = data.Max(d => d.Duration.TotalSeconds);
             var barCount = data.Count;
             var totalGapWidth = BarGap * (barCount - 1);
-            var barWidth = Math.Max(8, (Width - Padding * 2 - totalGapWidth) / barCount);
+            var barWidth = Math.Max(8, (Width - ChartPadding * 2 - totalGapWidth) / barCount);
 
             using var barBrush = new SolidBrush(AppTheme.Accent);
 
-            var x = Padding;
+            var x = ChartPadding;
             foreach (var (name, duration) in data)
             {
                 var fraction = maxSeconds > 0 ? duration.TotalSeconds / maxSeconds : 0;
