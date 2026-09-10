@@ -27,6 +27,13 @@ namespace AppTime
         private Panel usagePanel = null!;
         private Panel historyPanel = null!;
         private TableLayoutPanel historyTable = null!;
+        private readonly Dictionary<string, Button> periodTabButtons = new();
+        private string selectedHistoryPeriod = "Today";
+        private Label historySessionsCountValueLabel = null!;
+        private Label historyTotalTimeValueLabel = null!;
+        private Label historyMostUsedAppValueLabel = null!;
+        private Label historySessionsHeadingLabel = null!;
+        private Label historySummaryLabel = null!;
         private UsageTodayChart usageChart = null!;
         private Panel detailsPanel = null!;
         private AppEntry? currentDetailsApp;
@@ -214,7 +221,7 @@ namespace AppTime
             overviewPanel = BuildOverviewPanel();
             overviewPanel.Visible = true;
 
-            usagePanel = BuildPlaceholderPanel("Usage");
+            usagePanel = BuildPlaceholderPanel("Insights");
             usagePanel.Visible = false;
 
             historyPanel = BuildHistoryPanel();
@@ -594,8 +601,6 @@ namespace AppTime
 
         private Panel BuildHistoryPanel()
         {
-            // Same header-row-plus-scrollable-area shell as BuildLibraryArea, just
-            // with a grid of session rows instead of app cards.
             var panel = new Panel
             {
                 Dock = DockStyle.Fill,
@@ -603,18 +608,27 @@ namespace AppTime
                 Padding = new Padding(28, 16, 28, 20)
             };
 
-            var headerRow = new Panel { Dock = DockStyle.Top, Height = 36 };
-
-            var heading = new Label
+            // Title/subtitle, period tabs, stat cards, and the summary row are stacked
+            // via explicit (column, row) placement in one TableLayoutPanel - same
+            // approach as the Details view's topSection, to avoid Dock-ordering
+            // ambiguity among several fixed-height rows.
+            var topSection = new TableLayoutPanel
             {
-                Text = "History",
-                Dock = DockStyle.Fill,
-                AutoEllipsis = true,
-                Font = AppTheme.SectionHeading,
-                ForeColor = AppTheme.TextSecondary,
-                TextAlign = ContentAlignment.MiddleLeft
+                Dock = DockStyle.Top,
+                Height = 56 + 48 + 110 + 36,
+                ColumnCount = 1,
+                RowCount = 4
             };
-            headerRow.Controls.Add(heading);
+            topSection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 110f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
+
+            topSection.Controls.Add(BuildSessionsPageTitle(), 0, 0);
+            topSection.Controls.Add(BuildPeriodTabsRow(), 0, 1);
+            topSection.Controls.Add(BuildSessionsStatsRow(), 0, 2);
+            topSection.Controls.Add(BuildSessionsSummaryRow(), 0, 3);
 
             historyTable = new TableLayoutPanel
             {
@@ -625,23 +639,324 @@ namespace AppTime
             };
             historyTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
 
-            // Fill-docked table added before the Top-docked header row - same ordering
-            // as BuildLibraryArea, so the header claims the top and the table fills
-            // what's left below it.
+            // Fill-docked table added before the Top-docked section - same ordering as
+            // BuildLibraryArea/the Details view.
             panel.Controls.Add(historyTable);
-            panel.Controls.Add(headerRow);
+            panel.Controls.Add(topSection);
 
             PopulateHistory();
 
             return panel;
         }
 
-        // Rebuilds the History list from scratch, grouped by day (most recent day
-        // first, most recent session first within a day) - same rebuild-don't-diff
-        // approach used elsewhere (ApplyFilter, PopulateOverviewRecentApps).
+        private Panel BuildSessionsPageTitle()
+        {
+            var titlePanel = new Panel { Dock = DockStyle.Fill };
+
+            titlePanel.Controls.Add(new Label
+            {
+                Text = "Sessions",
+                AutoSize = true,
+                Location = new Point(0, 0),
+                Font = AppTheme.Heading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            titlePanel.Controls.Add(new Label
+            {
+                Text = "View and manage your application usage sessions.",
+                AutoSize = true,
+                Location = new Point(0, 28),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            return titlePanel;
+        }
+
+        // "Custom" isn't included yet - Today/This Week/This Month cover the useful
+        // cases for now, and a custom range picker is its own separate task.
+        private FlowLayoutPanel BuildPeriodTabsRow()
+        {
+            var row = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false
+            };
+
+            foreach (var period in new[] { "Today", "This Week", "This Month" })
+            {
+                var tabButton = new Button
+                {
+                    Text = period,
+                    FlatStyle = FlatStyle.Flat,
+                    Size = new Size(94, 32),
+                    Margin = new Padding(0, 0, 8, 0),
+                    Font = AppTheme.SmallText,
+                    Cursor = Cursors.Hand,
+                    TabStop = false
+                };
+                tabButton.FlatAppearance.BorderSize = 0;
+
+                var capturedPeriod = period;
+                tabButton.Click += (_, _) =>
+                {
+                    selectedHistoryPeriod = capturedPeriod;
+                    PopulateHistory();
+                };
+
+                periodTabButtons[period] = tabButton;
+                row.Controls.Add(tabButton);
+            }
+
+            return row;
+        }
+
+        private TableLayoutPanel BuildSessionsStatsRow()
+        {
+            var statsRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1
+            };
+            statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            AddStatCard(statsRow, "Total Sessions", "—", 0, 3, out historySessionsCountValueLabel);
+            AddStatCard(statsRow, "Total Time", "—", 1, 3, out historyTotalTimeValueLabel);
+            AddStatCard(statsRow, "Most Used App", "—", 2, 3, out historyMostUsedAppValueLabel);
+
+            return statsRow;
+        }
+
+        private Panel BuildSessionsSummaryRow()
+        {
+            var row = new Panel { Dock = DockStyle.Fill };
+
+            historySummaryLabel = new Label
+            {
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleRight,
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            };
+            row.Controls.Add(historySummaryLabel);
+
+            historySessionsHeadingLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(0, 6),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            };
+            row.Controls.Add(historySessionsHeadingLabel);
+
+            return row;
+        }
+
+        // Rebuilds the whole Sessions page (stat cards, summary line, and the row
+        // list) for whichever period tab is currently selected.
         private void PopulateHistory()
         {
-            PopulateSessionsTable(historyTable, sessions, "No sessions recorded yet.");
+            UpdatePeriodTabAppearance();
+
+            var periodSessions = FilterSessionsByPeriod(sessions, selectedHistoryPeriod)
+                .OrderByDescending(s => s.StartTime)
+                .ToList();
+
+            historySessionsCountValueLabel.Text = periodSessions.Count.ToString();
+
+            var totalTime = TimeSpan.FromTicks(periodSessions.Sum(s => (s.EndTime - s.StartTime).Ticks));
+            historyTotalTimeValueLabel.Text = FormatDuration(totalTime);
+
+            var mostUsedAppName = periodSessions
+                .GroupBy(s => s.AppId)
+                .Select(g => (
+                    Name: allApps.FirstOrDefault(a => a.Id == g.Key)?.Name ?? "Removed app",
+                    Total: TimeSpan.FromTicks(g.Sum(s => (s.EndTime - s.StartTime).Ticks))))
+                .OrderByDescending(x => x.Total)
+                .Select(x => x.Name)
+                .FirstOrDefault();
+            historyMostUsedAppValueLabel.Text = mostUsedAppName ?? "—";
+
+            historySessionsHeadingLabel.Text = selectedHistoryPeriod switch
+            {
+                "Today" => "Today's Sessions",
+                "This Week" => "This Week's Sessions",
+                "This Month" => "This Month's Sessions",
+                _ => "Sessions"
+            };
+            historySummaryLabel.Text = $"{periodSessions.Count} sessions  ·  {FormatDuration(totalTime)} total";
+
+            PopulateSessionsList(historyTable, periodSessions, "No sessions recorded for this period.");
+        }
+
+        private static IEnumerable<AppSession> FilterSessionsByPeriod(IEnumerable<AppSession> source, string period)
+        {
+            var today = DateTime.Today;
+            return period switch
+            {
+                "Today" => source.Where(s => s.StartTime.Date == today),
+                "This Week" => source.Where(s => s.StartTime.Date >= StartOfWeek(today)),
+                "This Month" => source.Where(s => s.StartTime.Date >= new DateTime(today.Year, today.Month, 1)),
+                _ => source
+            };
+        }
+
+        private void UpdatePeriodTabAppearance()
+        {
+            foreach (var (period, button) in periodTabButtons)
+            {
+                var isSelected = period == selectedHistoryPeriod;
+                button.BackColor = isSelected ? AppTheme.Accent : AppTheme.Background;
+                button.ForeColor = isSelected ? Color.White : AppTheme.TextSecondary;
+            }
+        }
+
+        // Flat list, most recent first - no day-grouping headers here (unlike
+        // PopulateSessionsTable/the Details view's per-app list), since the period
+        // tabs above already establish the timeframe being shown.
+        private void PopulateSessionsList(TableLayoutPanel table, List<AppSession> sessionsToShow, string emptyMessage)
+        {
+            table.Controls.Clear();
+            table.RowStyles.Clear();
+            table.RowCount = 0;
+
+            if (sessionsToShow.Count == 0)
+            {
+                table.RowCount = 1;
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 32f));
+                table.Controls.Add(new Label
+                {
+                    Text = emptyMessage,
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary
+                }, 0, 0);
+                return;
+            }
+
+            for (var i = 0; i < sessionsToShow.Count; i++)
+            {
+                table.RowCount = i + 1;
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+                var row = BuildSessionListRow(sessionsToShow[i]);
+                row.Dock = DockStyle.Fill;
+                table.Controls.Add(row, 0, i);
+            }
+        }
+
+        // Name + category, time range, duration, a "Running" pill when applicable,
+        // and a chevron - the whole row is clickable through to that app's Details
+        // view (skipped for a session whose app has since been removed). Icons/logos
+        // are intentionally left out for now.
+        private TableLayoutPanel BuildSessionListRow(AppSession session)
+        {
+            var app = allApps.FirstOrDefault(a => a.Id == session.AppId);
+            var appName = app?.Name ?? "Removed app";
+            var category = app?.Category ?? string.Empty;
+            var duration = FormatDuration(session.EndTime - session.StartTime);
+            var timeRange = $"{session.StartTime:HH:mm} - {session.EndTime:HH:mm}";
+            var isCurrentlyRunning = app is not null && IsProcessRunning(app);
+
+            var row = new TableLayoutPanel
+            {
+                ColumnCount = 5,
+                RowCount = 1
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 10f));
+            row.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            var nameCell = new Panel { Dock = DockStyle.Fill };
+            nameCell.Controls.Add(new Label
+            {
+                Text = appName,
+                AutoSize = true,
+                Location = new Point(0, 6),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary
+            });
+            nameCell.Controls.Add(new Label
+            {
+                Text = category,
+                AutoSize = true,
+                Location = new Point(0, 28),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+            row.Controls.Add(nameCell, 0, 0);
+
+            row.Controls.Add(new Label
+            {
+                Text = timeRange,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            }, 1, 0);
+
+            row.Controls.Add(new Label
+            {
+                Text = duration,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            }, 2, 0);
+
+            var statusCell = new Panel { Dock = DockStyle.Fill };
+            if (isCurrentlyRunning)
+            {
+                statusCell.Controls.Add(new Label
+                {
+                    Text = "Running",
+                    AutoSize = true,
+                    Location = new Point(0, 10),
+                    Font = new Font(AppTheme.SmallText, FontStyle.Bold),
+                    ForeColor = AppTheme.Success,
+                    BackColor = AppTheme.SuccessSubtle,
+                    Padding = new Padding(8, 3, 8, 3)
+                });
+            }
+            row.Controls.Add(statusCell, 3, 0);
+
+            row.Controls.Add(new Label
+            {
+                Text = "›",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font(AppTheme.CardTitle.FontFamily, 12f),
+                ForeColor = AppTheme.TextSecondary
+            }, 4, 0);
+
+            if (app is not null)
+            {
+                WireClickRecursively(row, (_, _) => ShowAppDetails(app));
+            }
+
+            return row;
+        }
+
+        // Attaches the same click handler (and hand cursor) to a control and every
+        // descendant - needed because clicks on child controls don't bubble up to a
+        // parent's own Click event in WinForms.
+        private static void WireClickRecursively(Control control, EventHandler handler)
+        {
+            control.Click += handler;
+            control.Cursor = Cursors.Hand;
+            foreach (Control child in control.Controls)
+            {
+                WireClickRecursively(child, handler);
+            }
         }
 
         // Shared by History (all sessions) and the app Details view (one app's
@@ -1078,21 +1393,32 @@ namespace AppTime
             AddSidebarItem(flow, "Games", category: "Games");
             AddSidebarItem(flow, "Utilities", category: "Utilities");
 
-            var insightsHeader = new Label
+            var activityDivider = new Panel
             {
-                Text = "INSIGHTS",
+                Width = 180,
+                Height = 1,
+                Margin = new Padding(4, 12, 0, 8),
+                BackColor = AppTheme.Border
+            };
+            flow.Controls.Add(activityDivider);
+
+            var activityHeader = new Label
+            {
+                Text = "ACTIVITY",
                 AutoSize = false,
                 Width = 180,
                 Height = 28,
                 Font = new Font(AppTheme.SmallText, FontStyle.Bold),
                 ForeColor = AppTheme.TextSecondary,
-                Padding = new Padding(4, 12, 0, 0),
+                Padding = new Padding(4, 0, 0, 0),
                 TextAlign = ContentAlignment.MiddleLeft
             };
-            flow.Controls.Add(insightsHeader);
+            flow.Controls.Add(activityHeader);
 
-            AddSidebarItem(flow, "Usage", category: null, viewKey: "Usage");
-            AddSidebarItem(flow, "History", category: null, viewKey: "History");
+            // Displayed as "Sessions" and "Insights" - ViewKey identifiers ("History",
+            // "Usage") are left as-is internally to keep this change small.
+            AddSidebarItem(flow, "Sessions", category: null, viewKey: "History");
+            AddSidebarItem(flow, "Insights", category: null, viewKey: "Usage");
 
             panel.Controls.Add(flow);
             panel.Controls.Add(divider);

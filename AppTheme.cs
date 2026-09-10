@@ -50,6 +50,10 @@ namespace AppTime
         // "this is destructive."
         public static readonly Color Success = Color.FromArgb(0x2E, 0xB6, 0x67);
 
+        // Light tint of Success - used for the "Running" pill on session rows, same
+        // relationship as AccentSubtle is to Accent.
+        public static readonly Color SuccessSubtle = Color.FromArgb(0xE8, 0xF7, 0xEE);
+
         // Segoe UI is the standard modern Windows UI font and is present on every
         // supported Windows version - no new font files or dependencies needed.
         private const string FontFamily = "Segoe UI";
