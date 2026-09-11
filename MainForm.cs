@@ -25,6 +25,10 @@ namespace AppTime
         private Label overviewTodayValueLabel = null!;
         private Label overviewThisWeekValueLabel = null!;
         private Panel usagePanel = null!;
+        private readonly Dictionary<string, Button> insightsPeriodTabButtons = new();
+        private string selectedInsightsPeriod = "This Week";
+        private WeeklyUsageChart weeklyUsageChart = null!;
+        private FlowLayoutPanel mostUsedAppsFlow = null!;
         private Panel historyPanel = null!;
         private TableLayoutPanel historyTable = null!;
         private readonly Dictionary<string, Button> periodTabButtons = new();
@@ -221,7 +225,7 @@ namespace AppTime
             overviewPanel = BuildOverviewPanel();
             overviewPanel.Visible = true;
 
-            usagePanel = BuildPlaceholderPanel("Insights");
+            usagePanel = BuildInsightsPanel();
             usagePanel.Visible = false;
 
             historyPanel = BuildHistoryPanel();
@@ -239,9 +243,11 @@ namespace AppTime
             return container;
         }
 
-        // Usage and History don't have any real content yet - just enough of a view
-        // to be a real navigation destination while the actual features are built.
-        private Panel BuildPlaceholderPanel(string title)
+        // Insights layout only for this commit - summary cards and Most Used
+        // Applications use real data; the weekly chart uses real session data too.
+        // Usage by Category and Insights & Trends are empty containers for now (see
+        // BuildEmptyInsightsContainer) - their content is a separate follow-up.
+        private Panel BuildInsightsPanel()
         {
             var panel = new Panel
             {
@@ -250,28 +256,364 @@ namespace AppTime
                 Padding = new Padding(28, 16, 28, 20)
             };
 
-            var heading = new Label
+            // Single scrollable column, same approach as BuildOverviewPanel - the page
+            // is taller than a typical window, so it scrolls as one block rather than
+            // splitting out a separately-scrolling sub-section.
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 5,
+                AutoScroll = true,
+                BackColor = AppTheme.Background
+            };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 190f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 190f));
+
+            layout.Controls.Add(BuildInsightsPageTitle(), 0, 0);
+            layout.Controls.Add(BuildInsightsPeriodTabsRow(), 0, 1);
+            layout.Controls.Add(BuildInsightsSummaryRow(), 0, 2);
+            layout.Controls.Add(BuildUsageThisWeekRow(), 0, 3);
+            layout.Controls.Add(BuildMostUsedApplicationsRow(), 0, 4);
+
+            panel.Controls.Add(layout);
+
+            UpdateInsightsPeriodTabAppearance();
+            PopulateUsageThisWeekChart();
+            PopulateMostUsedApplications();
+
+            return panel;
+        }
+
+        private Panel BuildInsightsPageTitle()
+        {
+            var titlePanel = new Panel { Dock = DockStyle.Fill };
+
+            titlePanel.Controls.Add(new Label
+            {
+                Text = "Insights",
+                AutoSize = true,
+                Location = new Point(0, 0),
+                Font = AppTheme.Heading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            titlePanel.Controls.Add(new Label
+            {
+                Text = "See how you're spending time across your apps and categories.",
+                AutoSize = true,
+                Location = new Point(0, 28),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            return titlePanel;
+        }
+
+        // Visually selectable, but only affects which tab looks selected for now -
+        // wiring these to actually filter the page's data is a follow-up commit.
+        private FlowLayoutPanel BuildInsightsPeriodTabsRow()
+        {
+            var row = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false
+            };
+
+            foreach (var period in new[] { "This Week", "This Month", "Last 3 Months" })
+            {
+                var tabButton = new Button
+                {
+                    Text = period,
+                    FlatStyle = FlatStyle.Flat,
+                    AutoSize = true,
+                    AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                    Padding = new Padding(14, 6, 14, 6),
+                    Margin = new Padding(0, 0, 8, 0),
+                    Font = AppTheme.SmallText,
+                    Cursor = Cursors.Hand,
+                    TabStop = false
+                };
+                tabButton.FlatAppearance.BorderSize = 0;
+
+                var capturedPeriod = period;
+                tabButton.Click += (_, _) =>
+                {
+                    selectedInsightsPeriod = capturedPeriod;
+                    UpdateInsightsPeriodTabAppearance();
+                };
+
+                insightsPeriodTabButtons[period] = tabButton;
+                row.Controls.Add(tabButton);
+            }
+
+            return row;
+        }
+
+        private void UpdateInsightsPeriodTabAppearance()
+        {
+            foreach (var (period, button) in insightsPeriodTabButtons)
+            {
+                var isSelected = period == selectedInsightsPeriod;
+                button.BackColor = isSelected ? AppTheme.Accent : AppTheme.Background;
+                button.ForeColor = isSelected ? Color.White : AppTheme.TextSecondary;
+            }
+        }
+
+        // Sample/placeholder values, as agreed for this first pass - not wired to the
+        // period tabs or real totals yet.
+        private TableLayoutPanel BuildInsightsSummaryRow()
+        {
+            var statsRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1
+            };
+            statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
+            statsRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            AddStatCard(statsRow, "Total Tracked Time", "18h 42m", 0, 3, out _);
+            AddStatCard(statsRow, "Total Sessions", "34", 1, 3, out _);
+            AddStatCard(statsRow, "Most Used App", "Visual Studio Code", 2, 3, out _);
+
+            return statsRow;
+        }
+
+        // "Usage This Week" (real data) alongside "Usage by Category" (empty for now).
+        private TableLayoutPanel BuildUsageThisWeekRow()
+        {
+            var row = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36f));
+            row.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            var chartBox = new RoundedPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+            chartBox.Controls.Add(new Label
+            {
+                Text = "Usage This Week",
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+            weeklyUsageChart = new WeeklyUsageChart
+            {
+                Location = new Point(8, 44),
+                Size = new Size(10, 10) // resized below once the box has real bounds
+            };
+            chartBox.Controls.Add(weeklyUsageChart);
+            chartBox.Resize += (_, _) => ResizeWeeklyUsageChart(chartBox);
+            row.Controls.Add(chartBox, 0, 0);
+
+            row.Controls.Add(BuildEmptyInsightsContainer("Usage by Category", new Padding(8, 0, 0, 0)), 1, 0);
+
+            return row;
+        }
+
+        private void ResizeWeeklyUsageChart(Panel chartBox)
+        {
+            weeklyUsageChart.SetBounds(8, 44, Math.Max(0, chartBox.Width - 16), Math.Max(0, chartBox.Height - 52));
+        }
+
+        private void PopulateUsageThisWeekChart()
+        {
+            var weekStart = StartOfWeek(DateTime.Today);
+            var days = Enumerable.Range(0, 7).Select(offset => weekStart.AddDays(offset)).ToList();
+
+            var totalsByDay = days.Select(day =>
+            {
+                var total = TimeSpan.FromTicks(sessions
+                    .Where(s => s.StartTime.Date == day)
+                    .Sum(s => (s.EndTime - s.StartTime).Ticks));
+                return (DayLabel: day.ToString("ddd"), Total: total);
+            }).ToList();
+
+            weeklyUsageChart.SetData(totalsByDay);
+        }
+
+        // "Most Used Applications" (real data) alongside "Insights & Trends" (empty
+        // for now).
+        private TableLayoutPanel BuildMostUsedApplicationsRow()
+        {
+            var row = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36f));
+            row.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            var listBox = new RoundedPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
+            listBox.Controls.Add(new Label
+            {
+                Text = "Most Used Applications",
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            mostUsedAppsFlow = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Location = new Point(16, 46)
+            };
+            listBox.Controls.Add(mostUsedAppsFlow);
+            listBox.Resize += (_, _) =>
+            {
+                mostUsedAppsFlow.Width = Math.Max(0, listBox.Width - 32);
+                foreach (Control child in mostUsedAppsFlow.Controls)
+                {
+                    child.Width = mostUsedAppsFlow.Width;
+                }
+            };
+            row.Controls.Add(listBox, 0, 0);
+
+            row.Controls.Add(BuildEmptyInsightsContainer("Insights & Trends", new Padding(8, 0, 0, 0)), 1, 0);
+
+            return row;
+        }
+
+        // Top 5 apps by all-time tracked time - the same ranking already used for
+        // Overview's Recent/Most Used. Percentage is each app's share of total tracked
+        // time across the whole library, not just the apps shown.
+        private void PopulateMostUsedApplications()
+        {
+            mostUsedAppsFlow.Controls.Clear();
+
+            var totalTrackedTicks = allApps.Sum(a => a.TotalUsageTime.Ticks);
+
+            var topApps = allApps.OrderByDescending(a => a.TotalUsageTime).Take(5).ToList();
+
+            if (topApps.Count == 0)
+            {
+                mostUsedAppsFlow.Controls.Add(new Label
+                {
+                    Text = "No usage tracked yet.",
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary
+                });
+                return;
+            }
+
+            for (var i = 0; i < topApps.Count; i++)
+            {
+                var app = topApps[i];
+                var percent = totalTrackedTicks > 0 ? app.TotalUsageTime.Ticks * 100.0 / totalTrackedTicks : 0;
+                mostUsedAppsFlow.Controls.Add(BuildMostUsedAppRow(app, i + 1, percent));
+            }
+        }
+
+        private Control BuildMostUsedAppRow(AppEntry app, int rank, double percentOfTotal)
+        {
+            var row = new TableLayoutPanel
+            {
+                Width = Math.Max(200, mostUsedAppsFlow.Width),
+                Height = 54,
+                Margin = new Padding(0, 0, 0, 8),
+                ColumnCount = 4,
+                RowCount = 2
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20f));
+            row.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            row.RowStyles.Add(new RowStyle(SizeType.Absolute, 14f));
+
+            row.Controls.Add(new Label
+            {
+                Text = rank.ToString(),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            }, 0, 0);
+
+            var nameCell = new Panel { Dock = DockStyle.Fill };
+            nameCell.Controls.Add(new Label
+            {
+                Text = app.Name,
+                AutoSize = true,
+                Location = new Point(0, 2),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary
+            });
+            nameCell.Controls.Add(new Label
+            {
+                Text = app.Category,
+                AutoSize = true,
+                Location = new Point(0, 22),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+            row.Controls.Add(nameCell, 1, 0);
+
+            row.Controls.Add(new Label
+            {
+                Text = FormatDuration(app.TotalUsageTime),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            }, 2, 0);
+
+            row.Controls.Add(new Label
+            {
+                Text = $"{percentOfTotal:0}%",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            }, 3, 0);
+
+            // Plain single-colour progress bar for now - per-category colours would
+            // need the same colour mapping Usage by Category will introduce, so this
+            // stays simple until that exists.
+            var barTrack = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 8, 0), BackColor = AppTheme.Border };
+            var barFill = new Panel { Dock = DockStyle.Left, Width = 0, BackColor = AppTheme.Accent };
+            barTrack.Controls.Add(barFill);
+            barTrack.Resize += (_, _) =>
+                barFill.Width = (int)(barTrack.Width * Math.Clamp(percentOfTotal / 100.0, 0, 1));
+            row.Controls.Add(barTrack, 1, 1);
+            row.SetColumnSpan(barTrack, 3);
+
+            return row;
+        }
+
+        // Placeholder shell for a section whose content comes in a later commit -
+        // heading only, correctly positioned, nothing else yet.
+        private RoundedPanel BuildEmptyInsightsContainer(string title, Padding margin)
+        {
+            var box = new RoundedPanel { Dock = DockStyle.Fill, Margin = margin };
+
+            box.Controls.Add(new Label
             {
                 Text = title,
                 AutoSize = true,
-                Location = new Point(0, 0),
+                Location = new Point(16, 14),
                 Font = AppTheme.SectionHeading,
-                ForeColor = AppTheme.TextSecondary
-            };
+                ForeColor = AppTheme.TextPrimary
+            });
 
-            var subtext = new Label
-            {
-                Text = "Work in progress.",
-                AutoSize = true,
-                Location = new Point(0, 32),
-                Font = AppTheme.Base,
-                ForeColor = AppTheme.TextSecondary
-            };
-
-            panel.Controls.Add(heading);
-            panel.Controls.Add(subtext);
-
-            return panel;
+            return box;
         }
 
         // Details view for a single app: name/category/tracked-time summary, an
