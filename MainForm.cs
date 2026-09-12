@@ -272,7 +272,7 @@ namespace AppTime
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 80f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 190f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 190f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 280f));
 
             layout.Controls.Add(BuildInsightsPageTitle(), 0, 0);
             layout.Controls.Add(BuildInsightsPeriodTabsRow(), 0, 1);
@@ -472,12 +472,15 @@ namespace AppTime
             {
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
-                Location = new Point(16, 46)
+                AutoScroll = false,
+                Location = new Point(16, 46),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             listBox.Controls.Add(mostUsedAppsFlow);
             listBox.Resize += (_, _) =>
             {
                 mostUsedAppsFlow.Width = Math.Max(0, listBox.Width - 32);
+                mostUsedAppsFlow.Height = Math.Max(0, listBox.Height - 58);
                 foreach (Control child in mostUsedAppsFlow.Controls)
                 {
                     child.Width = mostUsedAppsFlow.Width;
@@ -496,6 +499,13 @@ namespace AppTime
         private void PopulateMostUsedApplications()
         {
             mostUsedAppsFlow.Controls.Clear();
+
+            // Ensure the flow panel already has a sensible width before creating rows
+            // so percentage-based columns expand across the full container.
+            if (mostUsedAppsFlow.Parent != null)
+            {
+                mostUsedAppsFlow.Width = Math.Max(200, mostUsedAppsFlow.Parent.Width - 32);
+            }
 
             var totalTrackedTicks = allApps.Sum(a => a.TotalUsageTime.Ticks);
 
@@ -519,24 +529,33 @@ namespace AppTime
                 var percent = totalTrackedTicks > 0 ? app.TotalUsageTime.Ticks * 100.0 / totalTrackedTicks : 0;
                 mostUsedAppsFlow.Controls.Add(BuildMostUsedAppRow(app, i + 1, percent));
             }
+
+            // Force every row to the full flow width after they are added.
+            foreach (Control child in mostUsedAppsFlow.Controls)
+            {
+                child.Width = mostUsedAppsFlow.Width;
+            }
         }
 
         private Control BuildMostUsedAppRow(AppEntry app, int rank, double percentOfTotal)
         {
             var row = new TableLayoutPanel
             {
-                Width = Math.Max(200, mostUsedAppsFlow.Width),
-                Height = 54,
-                Margin = new Padding(0, 0, 0, 8),
-                ColumnCount = 4,
-                RowCount = 2
+                Width = Math.Max(280, mostUsedAppsFlow.Width),
+                Height = 38,
+                Margin = new Padding(0, 0, 0, 6),
+                ColumnCount = 5,
+                RowCount = 1,
+                // Prevent the table from collapsing its percentage columns
+                // when the parent flow panel is still laying out.
+                MinimumSize = new Size(280, 38)
             };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28f));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20f));
-            row.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-            row.RowStyles.Add(new RowStyle(SizeType.Absolute, 14f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 24f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40f));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62f));
+            row.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
             row.Controls.Add(new Label
             {
@@ -552,7 +571,7 @@ namespace AppTime
             {
                 Text = app.Name,
                 AutoSize = true,
-                Location = new Point(0, 2),
+                Location = new Point(0, 1),
                 Font = AppTheme.CardTitle,
                 ForeColor = AppTheme.TextPrimary
             });
@@ -560,7 +579,7 @@ namespace AppTime
             {
                 Text = app.Category,
                 AutoSize = true,
-                Location = new Point(0, 22),
+                Location = new Point(0, 19),
                 Font = AppTheme.SmallText,
                 ForeColor = AppTheme.TextSecondary
             });
@@ -584,16 +603,16 @@ namespace AppTime
                 ForeColor = AppTheme.TextSecondary
             }, 3, 0);
 
-            // Plain single-colour progress bar for now - per-category colours would
-            // need the same colour mapping Usage by Category will introduce, so this
-            // stays simple until that exists.
-            var barTrack = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 8, 0), BackColor = AppTheme.Border };
-            var barFill = new Panel { Dock = DockStyle.Left, Width = 0, BackColor = AppTheme.Accent };
-            barTrack.Controls.Add(barFill);
-            barTrack.Resize += (_, _) =>
-                barFill.Width = (int)(barTrack.Width * Math.Clamp(percentOfTotal / 100.0, 0, 1));
-            row.Controls.Add(barTrack, 1, 1);
-            row.SetColumnSpan(barTrack, 3);
+            // Inline bar, colour-coded by category, sitting on the same line as the
+            // rest of the row rather than dropped below it.
+            var usageBar = new UsageBar
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(8, 0, 0, 0),
+                FillColor = AppTheme.CategoryColor(app.Category)
+            };
+            usageBar.SetPercent(percentOfTotal);
+            row.Controls.Add(usageBar, 4, 0);
 
             return row;
         }

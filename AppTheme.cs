@@ -54,6 +54,26 @@ namespace AppTime
         // relationship as AccentSubtle is to Accent.
         public static readonly Color SuccessSubtle = Color.FromArgb(0xE8, 0xF7, 0xEE);
 
+        // Per-category accent colours - used for the progress bar in "Most Used
+        // Applications" so each app's bar reads as belonging to its category at a
+        // glance. Same palette the Usage by Category chart should reuse once it's
+        // built, so the two stay visually consistent.
+        public static readonly Color CategoryDevelopment = Accent;
+        public static readonly Color CategoryCreative = Color.FromArgb(0x8B, 0x5C, 0xF6);
+        public static readonly Color CategoryUtilities = Color.FromArgb(0x14, 0xB8, 0xA6);
+        public static readonly Color CategoryGames = Color.FromArgb(0xF5, 0x9E, 0x0B);
+
+        // Looks up the accent colour for a category name, falling back to Accent for
+        // any category (e.g. "Communication") that doesn't have a dedicated colour.
+        public static Color CategoryColor(string category) => category switch
+        {
+            "Development" => CategoryDevelopment,
+            "Creative" => CategoryCreative,
+            "Utilities" => CategoryUtilities,
+            "Games" => CategoryGames,
+            _ => Accent
+        };
+
         // Segoe UI is the standard modern Windows UI font and is present on every
         // supported Windows version - no new font files or dependencies needed.
         private const string FontFamily = "Segoe UI";
