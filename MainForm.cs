@@ -28,6 +28,7 @@ namespace AppTime
         private readonly Dictionary<string, Button> insightsPeriodTabButtons = new();
         private string selectedInsightsPeriod = "This Week";
         private WeeklyUsageChart weeklyUsageChart = null!;
+        private UsageByCategoryChart usageByCategoryChart = null!;
         private FlowLayoutPanel mostUsedAppsFlow = null!;
         private Panel historyPanel = null!;
         private TableLayoutPanel historyTable = null!;
@@ -243,10 +244,9 @@ namespace AppTime
             return container;
         }
 
-        // Insights layout only for this commit - summary cards and Most Used
-        // Applications use real data; the weekly chart uses real session data too.
-        // Usage by Category and Insights & Trends are empty containers for now (see
-        // BuildEmptyInsightsContainer) - their content is a separate follow-up.
+        // Insights layout: summary cards, weekly chart, category donut, and Most Used
+        // Applications use real data. Insights & Trends remains an empty container
+        // for a later follow-up (see BuildEmptyInsightsContainer).
         private Panel BuildInsightsPanel()
         {
             var panel = new Panel
@@ -284,6 +284,7 @@ namespace AppTime
 
             UpdateInsightsPeriodTabAppearance();
             PopulateUsageThisWeekChart();
+            PopulateUsageByCategory();
             PopulateMostUsedApplications();
 
             return panel;
@@ -387,7 +388,7 @@ namespace AppTime
             return statsRow;
         }
 
-        // "Usage This Week" (real data) alongside "Usage by Category" (empty for now).
+        // "Usage This Week" (real data) alongside "Usage by Category" (donut + legend).
         private TableLayoutPanel BuildUsageThisWeekRow()
         {
             var row = new TableLayoutPanel
@@ -418,9 +419,40 @@ namespace AppTime
             chartBox.Resize += (_, _) => ResizeWeeklyUsageChart(chartBox);
             row.Controls.Add(chartBox, 0, 0);
 
-            row.Controls.Add(BuildEmptyInsightsContainer("Usage by Category", new Padding(8, 0, 0, 0)), 1, 0);
+            row.Controls.Add(BuildUsageByCategoryContainer(new Padding(8, 0, 0, 0)), 1, 0);
 
             return row;
+        }
+
+        private RoundedPanel BuildUsageByCategoryContainer(Padding margin)
+        {
+            var box = new RoundedPanel { Dock = DockStyle.Fill, Margin = margin };
+
+            box.Controls.Add(new Label
+            {
+                Text = "Usage by Category",
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            usageByCategoryChart = new UsageByCategoryChart
+            {
+                Location = new Point(8, 40),
+                Size = new Size(10, 10)
+            };
+            box.Controls.Add(usageByCategoryChart);
+            box.Resize += (_, _) =>
+            {
+                usageByCategoryChart.SetBounds(
+                    8,
+                    40,
+                    Math.Max(0, box.Width - 16),
+                    Math.Max(0, box.Height - 48));
+            };
+
+            return box;
         }
 
         private void ResizeWeeklyUsageChart(Panel chartBox)
@@ -442,6 +474,21 @@ namespace AppTime
             }).ToList();
 
             weeklyUsageChart.SetData(totalsByDay);
+        }
+
+        // Category breakdown for the donut chart - groups library apps by category
+        // using each app's total tracked time (same source as Most Used Applications).
+        private void PopulateUsageByCategory()
+        {
+            var byCategory = allApps
+                .GroupBy(a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category)
+                .Select(g => (
+                    Category: g.Key,
+                    Duration: TimeSpan.FromTicks(g.Sum(a => a.TotalUsageTime.Ticks))))
+                .Where(c => c.Duration > TimeSpan.Zero)
+                .ToList();
+
+            usageByCategoryChart.SetData(byCategory);
         }
 
         // "Most Used Applications" (real data) alongside "Insights & Trends" (empty
