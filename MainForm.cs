@@ -30,6 +30,7 @@ namespace AppTime
         private WeeklyUsageChart weeklyUsageChart = null!;
         private UsageByCategoryChart usageByCategoryChart = null!;
         private FlowLayoutPanel mostUsedAppsFlow = null!;
+        private FlowLayoutPanel insightsTrendsFlow = null!;
         private Panel historyPanel = null!;
         private TableLayoutPanel historyTable = null!;
         private readonly Dictionary<string, Button> periodTabButtons = new();
@@ -78,8 +79,8 @@ namespace AppTime
             Text = "AppTime";
             BackColor = AppTheme.Background;
             Font = AppTheme.Base;
-            MinimumSize = new Size(1000, 650);
-            Size = new Size(1180, 720);
+            MinimumSize = new Size(1100, 720);
+            Size = new Size(1320, 800);
             StartPosition = FormStartPosition.CenterScreen;
 
             // Owner-drawn child controls (AppCard, SidebarItem) look considerably worse
@@ -244,9 +245,8 @@ namespace AppTime
             return container;
         }
 
-        // Insights layout: summary cards, weekly chart, category donut, and Most Used
-        // Applications use real data. Insights & Trends remains an empty container
-        // for a later follow-up (see BuildEmptyInsightsContainer).
+        // Insights layout: summary cards, weekly chart, category donut, Most Used
+        // Applications, and Insights & Trends all use real data.
         private Panel BuildInsightsPanel()
         {
             var panel = new Panel
@@ -286,6 +286,7 @@ namespace AppTime
             PopulateUsageThisWeekChart();
             PopulateUsageByCategory();
             PopulateMostUsedApplications();
+            PopulateInsightsTrends();
 
             return panel;
         }
@@ -491,8 +492,7 @@ namespace AppTime
             usageByCategoryChart.SetData(byCategory);
         }
 
-        // "Most Used Applications" (real data) alongside "Insights & Trends" (empty
-        // for now).
+        // "Most Used Applications" alongside "Insights & Trends" (both real data).
         private TableLayoutPanel BuildMostUsedApplicationsRow()
         {
             var row = new TableLayoutPanel
@@ -535,7 +535,195 @@ namespace AppTime
             };
             row.Controls.Add(listBox, 0, 0);
 
-            row.Controls.Add(BuildEmptyInsightsContainer("Insights & Trends", new Padding(8, 0, 0, 0)), 1, 0);
+            row.Controls.Add(BuildInsightsTrendsContainer(new Padding(8, 0, 0, 0)), 1, 0);
+
+            return row;
+        }
+
+        private RoundedPanel BuildInsightsTrendsContainer(Padding margin)
+        {
+            var box = new RoundedPanel { Dock = DockStyle.Fill, Margin = margin };
+
+            box.Controls.Add(new Label
+            {
+                Text = "Insights and Trends",
+                AutoSize = true,
+                Location = new Point(16, 14),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            insightsTrendsFlow = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = false,
+                Location = new Point(16, 44),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
+            };
+            box.Controls.Add(insightsTrendsFlow);
+            box.Resize += (_, _) =>
+            {
+                insightsTrendsFlow.Width = Math.Max(0, box.Width - 32);
+                insightsTrendsFlow.Height = Math.Max(0, box.Height - 56);
+                foreach (Control child in insightsTrendsFlow.Controls)
+                {
+                    child.Width = insightsTrendsFlow.Width;
+                }
+            };
+
+            return box;
+        }
+
+        // Four short narrative insights derived from sessions + library totals.
+        // Text only for now - icons can be added later to match the design mock.
+        private void PopulateInsightsTrends()
+        {
+            insightsTrendsFlow.Controls.Clear();
+
+            if (insightsTrendsFlow.Parent != null)
+            {
+                insightsTrendsFlow.Width = Math.Max(180, insightsTrendsFlow.Parent.Width - 32);
+            }
+
+            var today = DateTime.Today;
+            var thisWeekStart = StartOfWeek(today);
+            var lastWeekStart = thisWeekStart.AddDays(-7);
+            var lastWeekEnd = thisWeekStart;
+
+            var thisWeekSessions = sessions
+                .Where(s => s.StartTime.Date >= thisWeekStart && s.StartTime.Date <= today)
+                .ToList();
+            var lastWeekSessions = sessions
+                .Where(s => s.StartTime.Date >= lastWeekStart && s.StartTime.Date < lastWeekEnd)
+                .ToList();
+
+            var thisWeekTicks = thisWeekSessions.Sum(s => (s.EndTime - s.StartTime).Ticks);
+            var lastWeekTicks = lastWeekSessions.Sum(s => (s.EndTime - s.StartTime).Ticks);
+            var thisWeekTime = TimeSpan.FromTicks(thisWeekTicks);
+            var lastWeekTime = TimeSpan.FromTicks(lastWeekTicks);
+
+            // 1. Activity vs previous week
+            if (lastWeekTicks > 0)
+            {
+                var changePercent = (thisWeekTicks - lastWeekTicks) * 100.0 / lastWeekTicks;
+                var direction = changePercent >= 0 ? "more" : "less";
+                var absPercent = Math.Abs(changePercent);
+                insightsTrendsFlow.Controls.Add(BuildTrendItem(
+                    $"You're {absPercent:0}% {direction} active this week",
+                    $"Total tracked time is {(changePercent >= 0 ? "up" : "down")} from {FormatDuration(lastWeekTime)} last week to {FormatDuration(thisWeekTime)}."));
+            }
+            else if (thisWeekTicks > 0)
+            {
+                insightsTrendsFlow.Controls.Add(BuildTrendItem(
+                    "You're getting started this week",
+                    $"Total tracked time so far is {FormatDuration(thisWeekTime)}."));
+            }
+            else
+            {
+                insightsTrendsFlow.Controls.Add(BuildTrendItem(
+                    "No activity this week yet",
+                    "Start a session to see how this week compares to the last."));
+            }
+
+            // 2. Top category (all-time library totals)
+            var categoryTotals = allApps
+                .GroupBy(a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category)
+                .Select(g => new
+                {
+                    Category = g.Key,
+                    Ticks = g.Sum(a => a.TotalUsageTime.Ticks)
+                })
+                .Where(c => c.Ticks > 0)
+                .OrderByDescending(c => c.Ticks)
+                .ToList();
+
+            var libraryTotalTicks = allApps.Sum(a => a.TotalUsageTime.Ticks);
+            if (categoryTotals.Count > 0 && libraryTotalTicks > 0)
+            {
+                var top = categoryTotals[0];
+                var topPercent = top.Ticks * 100.0 / libraryTotalTicks;
+                var topDuration = TimeSpan.FromTicks(top.Ticks);
+                insightsTrendsFlow.Controls.Add(BuildTrendItem(
+                    $"{top.Category} is your top category",
+                    $"You spent {topPercent:0}% of your time in {top.Category.ToLowerInvariant()} apps ({FormatDuration(topDuration)})."));
+            }
+
+            // 3. Average session length (this week if available, otherwise all sessions)
+            var sessionSource = thisWeekSessions.Count > 0 ? thisWeekSessions : sessions;
+            if (sessionSource.Count > 0)
+            {
+                var avgTicks = sessionSource.Average(s => (s.EndTime - s.StartTime).TotalMinutes);
+                var avgMinutes = Math.Max(1, (int)Math.Round(avgTicks));
+                var scope = thisWeekSessions.Count > 0 ? "this week" : "overall";
+                insightsTrendsFlow.Controls.Add(BuildTrendItem(
+                    $"Your average session is {avgMinutes} minute{(avgMinutes == 1 ? "" : "s")}",
+                    $"Across {sessionSource.Count} session{(sessionSource.Count == 1 ? "" : "s")} {scope}."));
+            }
+
+            // 4. Most used app
+            var topApp = allApps.OrderByDescending(a => a.TotalUsageTime).FirstOrDefault();
+            if (topApp != null && topApp.TotalUsageTime > TimeSpan.Zero && libraryTotalTicks > 0)
+            {
+                var appPercent = topApp.TotalUsageTime.Ticks * 100.0 / libraryTotalTicks;
+                insightsTrendsFlow.Controls.Add(BuildTrendItem(
+                    $"{topApp.Name} is your most used app",
+                    $"{FormatDuration(topApp.TotalUsageTime)} ({appPercent:0}% of total time)."));
+            }
+
+            foreach (Control child in insightsTrendsFlow.Controls)
+            {
+                child.Width = insightsTrendsFlow.Width;
+            }
+        }
+
+        private Control BuildTrendItem(string title, string detail)
+        {
+            var contentWidth = Math.Max(160, insightsTrendsFlow.Width);
+
+            var titleLabel = new Label
+            {
+                Text = title,
+                AutoSize = true,
+                Location = new Point(0, 0),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary,
+                MaximumSize = new Size(contentWidth, 0)
+            };
+
+            var detailLabel = new Label
+            {
+                Text = detail,
+                AutoSize = true,
+                Location = new Point(0, 20),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary,
+                MaximumSize = new Size(contentWidth, 0)
+            };
+
+            // Measure preferred heights so wrapped detail text is fully visible.
+            var titleHeight = titleLabel.PreferredHeight;
+            detailLabel.Location = new Point(0, titleHeight + 2);
+            var detailHeight = detailLabel.PreferredHeight;
+
+            var row = new Panel
+            {
+                Width = contentWidth,
+                Height = titleHeight + detailHeight + 6,
+                Margin = new Padding(0, 0, 0, 8)
+            };
+            row.Controls.Add(titleLabel);
+            row.Controls.Add(detailLabel);
+
+            // Keep labels in sync when the flow panel is resized.
+            row.Resize += (_, _) =>
+            {
+                var w = Math.Max(160, row.Width);
+                titleLabel.MaximumSize = new Size(w, 0);
+                detailLabel.MaximumSize = new Size(w, 0);
+                detailLabel.Location = new Point(0, titleLabel.PreferredHeight + 2);
+                row.Height = titleLabel.PreferredHeight + detailLabel.PreferredHeight + 6;
+            };
 
             return row;
         }
