@@ -466,12 +466,37 @@ namespace AppTime
             var weekStart = StartOfWeek(DateTime.Today);
             var days = Enumerable.Range(0, 7).Select(offset => weekStart.AddDays(offset)).ToList();
 
+            // Map AppId → category once so each session can be attributed quickly.
+            var categoryByAppId = allApps.ToDictionary(
+                a => a.Id,
+                a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category);
+
             var totalsByDay = days.Select(day =>
             {
-                var total = TimeSpan.FromTicks(sessions
-                    .Where(s => s.StartTime.Date == day)
-                    .Sum(s => (s.EndTime - s.StartTime).Ticks));
-                return (DayLabel: day.ToString("ddd"), Total: total);
+                var segments = new Dictionary<string, TimeSpan>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var session in sessions.Where(s => s.StartTime.Date == day))
+                {
+                    var category = categoryByAppId.TryGetValue(session.AppId, out var cat)
+                        ? cat
+                        : "Other";
+                    var duration = session.EndTime - session.StartTime;
+                    if (duration <= TimeSpan.Zero)
+                    {
+                        continue;
+                    }
+
+                    if (segments.TryGetValue(category, out var existing))
+                    {
+                        segments[category] = existing + duration;
+                    }
+                    else
+                    {
+                        segments[category] = duration;
+                    }
+                }
+
+                return (DayLabel: day.ToString("ddd"), Segments: segments);
             }).ToList();
 
             weeklyUsageChart.SetData(totalsByDay);
@@ -546,7 +571,7 @@ namespace AppTime
 
             box.Controls.Add(new Label
             {
-                Text = "Insights and Trends",
+                Text = "Insights & Trends",
                 AutoSize = true,
                 Location = new Point(16, 14),
                 Font = AppTheme.SectionHeading,
