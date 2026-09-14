@@ -7,22 +7,25 @@ using System.Windows.Forms;
 
 namespace AppTime
 {
-    /// Stacked vertical bar chart for a week's usage - one bar per day (Mon–Sun),
-    /// segments coloured by category, with a small legend on the right.
+    /// Stacked vertical bar chart for usage over a period - one bar per bucket
+    /// (day / week / month), segments coloured by category, with a legend on the right.
     public class WeeklyUsageChart : Panel
     {
         private const int ChartPadding = 12;
-        private const int LeftAxisWidth = 32;
+        private const int LeftAxisWidth = 40;
         private const int DayLabelAreaHeight = 20;
         private const int BarGap = 14;
         private const int LegendWidth = 110;
+        // Keep labels readable: don't pack more ticks than the chart height can hold.
+        private const int MinPixelsPerTick = 28;
+        private const int MaxTickCount = 6;
 
         private static readonly string[] PreferredOrder =
         {
             "Development", "Creative", "Utilities", "Games"
         };
 
-        // One entry per day; Segments are category → duration for that day.
+        // One entry per bucket; Segments are category → duration for that bucket.
         private List<(string DayLabel, Dictionary<string, TimeSpan> Segments)> data = new();
 
         public WeeklyUsageChart()
@@ -47,7 +50,7 @@ namespace AppTime
 
             if (data.Count == 0 || data.All(d => d.Segments.Values.All(t => t <= TimeSpan.Zero)))
             {
-                var message = "No usage tracked this week yet.";
+                var message = "No usage tracked for this period yet.";
                 var messageSize = g.MeasureString(message, AppTheme.Base);
                 g.DrawString(message, AppTheme.Base, axisBrush,
                     (Width - messageSize.Width) / 2, (Height - messageSize.Height) / 2);
@@ -63,7 +66,7 @@ namespace AppTime
                 return;
             }
 
-            // Categories present this week, in preferred order then alphabetical.
+            // Categories present in this period, in preferred order then alphabetical.
             var categories = data
                 .SelectMany(d => d.Segments.Where(s => s.Value > TimeSpan.Zero).Select(s => s.Key))
                 .Distinct()
@@ -78,17 +81,20 @@ namespace AppTime
             var dayTotals = data
                 .Select(d => TimeSpan.FromTicks(d.Segments.Values.Sum(t => t.Ticks)))
                 .ToList();
-            var maxHours = Math.Max(1, (int)Math.Ceiling(dayTotals.Max(t => t.TotalHours)));
+            var maxTotalHours = dayTotals.Max(t => t.TotalHours);
 
-            // Grid + Y-axis labels
+            // Nice axis scale: round the max up to a clean step so labels stay sparse.
+            var (axisMaxHours, tickStepHours) = ChooseAxisScale(maxTotalHours, chartHeight);
+
+            // Grid + Y-axis labels at the chosen step only.
             using (var gridPen = new Pen(AppTheme.Border, 1))
             {
-                for (var hour = 0; hour <= maxHours; hour++)
+                for (var value = 0.0; value <= axisMaxHours + 0.001; value += tickStepHours)
                 {
-                    var y = chartTop + chartHeight - (int)(chartHeight * (hour / (double)maxHours));
+                    var y = chartTop + chartHeight - (int)(chartHeight * (value / axisMaxHours));
                     g.DrawLine(gridPen, chartLeft, y, chartLeft + chartWidth, y);
 
-                    var label = hour == 0 ? "0" : $"{hour}h";
+                    var label = FormatAxisLabel(value);
                     var labelSize = g.MeasureString(label, axisFont);
                     g.DrawString(label, axisFont, axisBrush,
                         chartLeft - labelSize.Width - 6, y - labelSize.Height / 2);
@@ -98,7 +104,6 @@ namespace AppTime
             var dayCount = data.Count;
             var totalGapWidth = BarGap * Math.Max(0, dayCount - 1);
             var barWidth = Math.Max(8, (chartWidth - totalGapWidth) / dayCount);
-            // Slightly rounded look via a small radius, but keep simple fills.
             const int barRadius = 3;
 
             var x = chartLeft;
@@ -106,7 +111,7 @@ namespace AppTime
             {
                 var (dayLabel, segments) = data[dayIndex];
 
-                // Build ordered stack for this day (bottom → top).
+                // Build ordered stack for this bucket (bottom → top).
                 var stack = new List<(string Category, int Height)>();
                 foreach (var category in categories)
                 {
@@ -115,7 +120,7 @@ namespace AppTime
                         continue;
                     }
 
-                    var segmentHeight = Math.Max(1, (int)Math.Round(chartHeight * (duration.TotalHours / maxHours)));
+                    var segmentHeight = Math.Max(1, (int)Math.Round(chartHeight * (duration.TotalHours / axisMaxHours)));
                     stack.Add((category, segmentHeight));
                 }
 
@@ -134,7 +139,7 @@ namespace AppTime
                     currentBottom = segmentTop;
                 }
 
-                // Day label under the bar
+                // Bucket label under the bar
                 var dayLabelSize = g.MeasureString(dayLabel, axisFont);
                 g.DrawString(dayLabel, axisFont, axisBrush,
                     x + (barWidth - dayLabelSize.Width) / 2f, chartTop + chartHeight + 4);
@@ -143,6 +148,89 @@ namespace AppTime
             }
 
             DrawLegend(g, categories, Width - LegendWidth - 4, chartTop, LegendWidth, chartHeight);
+        }
+
+        /// Picks a rounded max and step so the axis has a small, even set of labels
+        /// that fit the available chart height.
+        private static (double AxisMaxHours, double TickStepHours) ChooseAxisScale(double maxHours, int chartHeight)
+        {
+            // Always leave a little headroom above the tallest bar.
+            var targetMax = Math.Max(0.5, maxHours * 1.1);
+
+            // How many ticks can we comfortably show?
+            var maxTicks = Math.Max(2, Math.Min(MaxTickCount, chartHeight / MinPixelsPerTick));
+
+            // Preferred step sizes in hours (covers minutes through multi-day totals).
+            double[] candidates =
+            {
+                1.0 / 60,   // 1m
+                5.0 / 60,   // 5m
+                10.0 / 60,  // 10m
+                15.0 / 60,  // 15m
+                30.0 / 60,  // 30m
+                1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 24, 30, 40, 48, 60, 72, 96, 120
+            };
+
+            foreach (var step in candidates)
+            {
+                var ticksNeeded = (int)Math.Ceiling(targetMax / step);
+                if (ticksNeeded <= maxTicks)
+                {
+                    var axisMax = Math.Ceiling(targetMax / step) * step;
+                    // Ensure at least one non-zero tick.
+                    if (axisMax < step)
+                    {
+                        axisMax = step;
+                    }
+
+                    return (axisMax, step);
+                }
+            }
+
+            // Fallback for very large totals: step in multiples of 24h.
+            var coarseStep = Math.Ceiling(targetMax / maxTicks / 24) * 24;
+            if (coarseStep < 24)
+            {
+                coarseStep = 24;
+            }
+
+            return (Math.Ceiling(targetMax / coarseStep) * coarseStep, coarseStep);
+        }
+
+        private static string FormatAxisLabel(double hours)
+        {
+            if (hours <= 0)
+            {
+                return "0";
+            }
+
+            // Sub-hour scale → show minutes.
+            if (hours < 1)
+            {
+                var minutes = (int)Math.Round(hours * 60);
+                return $"{minutes}m";
+            }
+
+            // Whole hours.
+            if (Math.Abs(hours - Math.Round(hours)) < 0.001)
+            {
+                return $"{(int)Math.Round(hours)}h";
+            }
+
+            // Fractional hours (e.g. 1.5) → hours + minutes.
+            var wholeHours = (int)hours;
+            var mins = (int)Math.Round((hours - wholeHours) * 60);
+            if (mins == 0)
+            {
+                return $"{wholeHours}h";
+            }
+
+            if (wholeHours == 0)
+            {
+                return $"{mins}m";
+            }
+
+            return $"{wholeHours}h {mins}m";
         }
 
         private static void FillRoundedTop(Graphics g, Brush brush, Rectangle rect, int radius, bool isTop)

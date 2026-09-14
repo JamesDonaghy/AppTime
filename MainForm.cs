@@ -27,6 +27,10 @@ namespace AppTime
         private Panel usagePanel = null!;
         private readonly Dictionary<string, Button> insightsPeriodTabButtons = new();
         private string selectedInsightsPeriod = "This Week";
+        private Label insightsTotalTimeValueLabel = null!;
+        private Label insightsSessionsCountValueLabel = null!;
+        private Label insightsMostUsedAppValueLabel = null!;
+        private Label usageChartTitleLabel = null!;
         private WeeklyUsageChart weeklyUsageChart = null!;
         private UsageByCategoryChart usageByCategoryChart = null!;
         private FlowLayoutPanel mostUsedAppsFlow = null!;
@@ -288,11 +292,7 @@ namespace AppTime
 
             panel.Controls.Add(layout);
 
-            UpdateInsightsPeriodTabAppearance();
-            PopulateUsageThisWeekChart();
-            PopulateUsageByCategory();
-            PopulateMostUsedApplications();
-            PopulateInsightsTrends();
+            PopulateInsights();
 
             return panel;
         }
@@ -322,8 +322,6 @@ namespace AppTime
             return titlePanel;
         }
 
-        // Visually selectable, but only affects which tab looks selected for now -
-        // wiring these to actually filter the page's data is a follow-up commit.
         private FlowLayoutPanel BuildInsightsPeriodTabsRow()
         {
             var row = new FlowLayoutPanel
@@ -352,8 +350,13 @@ namespace AppTime
                 var capturedPeriod = period;
                 tabButton.Click += (_, _) =>
                 {
+                    if (selectedInsightsPeriod == capturedPeriod)
+                    {
+                        return;
+                    }
+
                     selectedInsightsPeriod = capturedPeriod;
-                    UpdateInsightsPeriodTabAppearance();
+                    PopulateInsights();
                 };
 
                 insightsPeriodTabButtons[period] = tabButton;
@@ -373,8 +376,6 @@ namespace AppTime
             }
         }
 
-        // Sample/placeholder values, as agreed for this first pass - not wired to the
-        // period tabs or real totals yet.
         private TableLayoutPanel BuildInsightsSummaryRow()
         {
             var statsRow = new TableLayoutPanel
@@ -388,9 +389,9 @@ namespace AppTime
             statsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
             statsRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
-            AddStatCard(statsRow, "Total Tracked Time", "18h 42m", 0, 3, out _);
-            AddStatCard(statsRow, "Total Sessions", "34", 1, 3, out _);
-            AddStatCard(statsRow, "Most Used App", "Visual Studio Code", 2, 3, out _);
+            AddStatCard(statsRow, "Total Tracked Time", "—", 0, 3, out insightsTotalTimeValueLabel);
+            AddStatCard(statsRow, "Total Sessions", "—", 1, 3, out insightsSessionsCountValueLabel);
+            AddStatCard(statsRow, "Most Used App", "—", 2, 3, out insightsMostUsedAppValueLabel);
 
             return statsRow;
         }
@@ -409,14 +410,15 @@ namespace AppTime
             row.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
             var chartBox = new RoundedPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 8, 0) };
-            chartBox.Controls.Add(new Label
+            usageChartTitleLabel = new Label
             {
                 Text = "Usage This Week",
                 AutoSize = true,
                 Location = new Point(16, 14),
                 Font = AppTheme.SectionHeading,
                 ForeColor = AppTheme.TextPrimary
-            });
+            };
+            chartBox.Controls.Add(usageChartTitleLabel);
             weeklyUsageChart = new WeeklyUsageChart
             {
                 Location = new Point(8, 44),
@@ -467,56 +469,142 @@ namespace AppTime
             weeklyUsageChart.SetBounds(8, 44, Math.Max(0, chartBox.Width - 16), Math.Max(0, chartBox.Height - 52));
         }
 
-        private void PopulateUsageThisWeekChart()
+        // Rebuilds every Insights section for the currently selected period tab.
+        private void PopulateInsights()
         {
-            var weekStart = StartOfWeek(DateTime.Today);
-            var days = Enumerable.Range(0, 7).Select(offset => weekStart.AddDays(offset)).ToList();
+            UpdateInsightsPeriodTabAppearance();
 
-            // Map AppId → category once so each session can be attributed quickly.
+            var periodSessions = GetSessionsForPeriod(selectedInsightsPeriod).ToList();
+
+            // Summary cards
+            var totalTicks = periodSessions.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks));
+            insightsTotalTimeValueLabel.Text = FormatDuration(TimeSpan.FromTicks(totalTicks));
+            insightsSessionsCountValueLabel.Text = periodSessions.Count.ToString();
+
+            var mostUsed = periodSessions
+                .GroupBy(s => s.AppId)
+                .Select(g => (
+                    Name: allApps.FirstOrDefault(a => a.Id == g.Key)?.Name ?? "Removed app",
+                    Ticks: g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks))))
+                .OrderByDescending(x => x.Ticks)
+                .FirstOrDefault();
+            insightsMostUsedAppValueLabel.Text = mostUsed.Ticks > 0 ? mostUsed.Name : "—";
+
+            usageChartTitleLabel.Text = selectedInsightsPeriod switch
+            {
+                "This Month" => "Usage This Month",
+                "Last 3 Months" => "Usage Last 3 Months",
+                _ => "Usage This Week"
+            };
+
+            PopulateUsageChartForPeriod(periodSessions);
+            PopulateUsageByCategory(periodSessions);
+            PopulateMostUsedApplications(periodSessions);
+            PopulateInsightsTrends(periodSessions);
+        }
+
+        private void PopulateUsageChartForPeriod(List<AppSession> periodSessions)
+        {
             var categoryByAppId = allApps.ToDictionary(
                 a => a.Id,
                 a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category);
 
-            var totalsByDay = days.Select(day =>
+            List<(string DayLabel, Dictionary<string, TimeSpan> Segments)> buckets;
+
+            if (selectedInsightsPeriod == "Last 3 Months")
             {
-                var segments = new Dictionary<string, TimeSpan>(StringComparer.OrdinalIgnoreCase);
+                // One bar per calendar month covering the last 3 months (including current).
+                var today = DateTime.Today;
+                var months = Enumerable.Range(0, 3)
+                    .Select(offset => new DateTime(today.Year, today.Month, 1).AddMonths(offset - 2))
+                    .ToList();
 
-                foreach (var session in sessions.Where(s => s.StartTime.Date == day))
+                buckets = months.Select(monthStart =>
                 {
-                    var category = categoryByAppId.TryGetValue(session.AppId, out var cat)
-                        ? cat
-                        : "Other";
-                    var duration = session.EndTime - session.StartTime;
-                    if (duration <= TimeSpan.Zero)
-                    {
-                        continue;
-                    }
-
-                    if (segments.TryGetValue(category, out var existing))
-                    {
-                        segments[category] = existing + duration;
-                    }
-                    else
-                    {
-                        segments[category] = duration;
-                    }
+                    var monthEnd = monthStart.AddMonths(1);
+                    var segments = AggregateSegments(
+                        periodSessions.Where(s => s.StartTime.Date >= monthStart && s.StartTime.Date < monthEnd),
+                        categoryByAppId);
+                    return (DayLabel: monthStart.ToString("MMM"), Segments: segments);
+                }).ToList();
+            }
+            else if (selectedInsightsPeriod == "This Month")
+            {
+                // One bar per week of the current month so far (week starts Monday).
+                var today = DateTime.Today;
+                var monthStart = new DateTime(today.Year, today.Month, 1);
+                var firstWeekStart = StartOfWeek(monthStart);
+                var bucketsList = new List<(string, Dictionary<string, TimeSpan>)>();
+                for (var weekStart = firstWeekStart; weekStart <= today; weekStart = weekStart.AddDays(7))
+                {
+                    var weekEnd = weekStart.AddDays(7);
+                    var segments = AggregateSegments(
+                        periodSessions.Where(s => s.StartTime.Date >= weekStart && s.StartTime.Date < weekEnd
+                            && s.StartTime.Date >= monthStart && s.StartTime.Date <= today),
+                        categoryByAppId);
+                    var label = weekStart < monthStart
+                        ? monthStart.ToString("d MMM")
+                        : weekStart.ToString("d MMM");
+                    bucketsList.Add((label, segments));
                 }
 
-                return (DayLabel: day.ToString("ddd"), Segments: segments);
-            }).ToList();
+                buckets = bucketsList;
+            }
+            else
+            {
+                // This Week: Mon–Sun daily bars.
+                var weekStart = StartOfWeek(DateTime.Today);
+                var days = Enumerable.Range(0, 7).Select(offset => weekStart.AddDays(offset)).ToList();
+                buckets = days.Select(day =>
+                {
+                    var segments = AggregateSegments(
+                        periodSessions.Where(s => s.StartTime.Date == day),
+                        categoryByAppId);
+                    return (DayLabel: day.ToString("ddd"), Segments: segments);
+                }).ToList();
+            }
 
-            weeklyUsageChart.SetData(totalsByDay);
+            weeklyUsageChart.SetData(buckets);
         }
 
-        // Category breakdown for the donut chart - groups library apps by category
-        // using each app's total tracked time (same source as Most Used Applications).
-        private void PopulateUsageByCategory()
+        private static Dictionary<string, TimeSpan> AggregateSegments(
+            IEnumerable<AppSession> source,
+            Dictionary<Guid, string> categoryByAppId)
         {
-            var byCategory = allApps
-                .GroupBy(a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category)
+            var segments = new Dictionary<string, TimeSpan>(StringComparer.OrdinalIgnoreCase);
+            foreach (var session in source)
+            {
+                var category = categoryByAppId.TryGetValue(session.AppId, out var cat) ? cat : "Other";
+                var duration = session.EndTime - session.StartTime;
+                if (duration <= TimeSpan.Zero)
+                {
+                    continue;
+                }
+
+                if (segments.TryGetValue(category, out var existing))
+                {
+                    segments[category] = existing + duration;
+                }
+                else
+                {
+                    segments[category] = duration;
+                }
+            }
+
+            return segments;
+        }
+
+        private void PopulateUsageByCategory(List<AppSession> periodSessions)
+        {
+            var categoryByAppId = allApps.ToDictionary(
+                a => a.Id,
+                a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category);
+
+            var byCategory = periodSessions
+                .GroupBy(s => categoryByAppId.TryGetValue(s.AppId, out var cat) ? cat : "Other")
                 .Select(g => (
                     Category: g.Key,
-                    Duration: TimeSpan.FromTicks(g.Sum(a => a.TotalUsageTime.Ticks))))
+                    Duration: TimeSpan.FromTicks(g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks)))))
                 .Where(c => c.Duration > TimeSpan.Zero)
                 .ToList();
 
@@ -606,9 +694,8 @@ namespace AppTime
             return box;
         }
 
-        // Four short narrative insights derived from sessions + library totals.
-        // Text only for now - icons can be added later to match the design mock.
-        private void PopulateInsightsTrends()
+        // Narrative insights derived from the selected period's sessions.
+        private void PopulateInsightsTrends(List<AppSession> periodSessions)
         {
             insightsTrendsFlow.Controls.Clear();
 
@@ -618,94 +705,133 @@ namespace AppTime
             }
 
             var today = DateTime.Today;
-            var thisWeekStart = StartOfWeek(today);
-            var lastWeekStart = thisWeekStart.AddDays(-7);
-            var lastWeekEnd = thisWeekStart;
-
-            var thisWeekSessions = sessions
-                .Where(s => s.StartTime.Date >= thisWeekStart && s.StartTime.Date <= today)
-                .ToList();
-            var lastWeekSessions = sessions
-                .Where(s => s.StartTime.Date >= lastWeekStart && s.StartTime.Date < lastWeekEnd)
-                .ToList();
-
-            var thisWeekTicks = thisWeekSessions.Sum(s => (s.EndTime - s.StartTime).Ticks);
-            var lastWeekTicks = lastWeekSessions.Sum(s => (s.EndTime - s.StartTime).Ticks);
-            var thisWeekTime = TimeSpan.FromTicks(thisWeekTicks);
-            var lastWeekTime = TimeSpan.FromTicks(lastWeekTicks);
-
-            // 1. Activity vs previous week
-            if (lastWeekTicks > 0)
+            var periodLabel = selectedInsightsPeriod switch
             {
-                var changePercent = (thisWeekTicks - lastWeekTicks) * 100.0 / lastWeekTicks;
+                "This Month" => "this month",
+                "Last 3 Months" => "over the last 3 months",
+                _ => "this week"
+            };
+
+            var periodTicks = periodSessions.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks));
+            var periodTime = TimeSpan.FromTicks(periodTicks);
+
+            // 1. Activity vs previous comparable period
+            var (previousSessions, previousLabel) = GetPreviousPeriodSessions(selectedInsightsPeriod);
+            var previousTicks = previousSessions.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks));
+            var previousTime = TimeSpan.FromTicks(previousTicks);
+
+            if (previousTicks > 0)
+            {
+                var changePercent = (periodTicks - previousTicks) * 100.0 / previousTicks;
                 var direction = changePercent >= 0 ? "more" : "less";
                 var absPercent = Math.Abs(changePercent);
                 insightsTrendsFlow.Controls.Add(BuildTrendItem(
-                    $"You're {absPercent:0}% {direction} active this week",
-                    $"Total tracked time is {(changePercent >= 0 ? "up" : "down")} from {FormatDuration(lastWeekTime)} last week to {FormatDuration(thisWeekTime)}."));
+                    $"You're {absPercent:0}% {direction} active {periodLabel}",
+                    $"Total tracked time is {(changePercent >= 0 ? "up" : "down")} from {FormatDuration(previousTime)} {previousLabel} to {FormatDuration(periodTime)}."));
             }
-            else if (thisWeekTicks > 0)
+            else if (periodTicks > 0)
             {
                 insightsTrendsFlow.Controls.Add(BuildTrendItem(
-                    "You're getting started this week",
-                    $"Total tracked time so far is {FormatDuration(thisWeekTime)}."));
+                    $"You're getting started {periodLabel}",
+                    $"Total tracked time so far is {FormatDuration(periodTime)}."));
             }
             else
             {
                 insightsTrendsFlow.Controls.Add(BuildTrendItem(
-                    "No activity this week yet",
-                    "Start a session to see how this week compares to the last."));
+                    $"No activity {periodLabel} yet",
+                    "Start a session to see how this period compares to the last."));
             }
 
-            // 2. Top category (all-time library totals)
-            var categoryTotals = allApps
-                .GroupBy(a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category)
+            // 2. Top category within the selected period
+            var categoryByAppId = allApps.ToDictionary(
+                a => a.Id,
+                a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category);
+
+            var categoryTotals = periodSessions
+                .GroupBy(s => categoryByAppId.TryGetValue(s.AppId, out var cat) ? cat : "Other")
                 .Select(g => new
                 {
                     Category = g.Key,
-                    Ticks = g.Sum(a => a.TotalUsageTime.Ticks)
+                    Ticks = g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks))
                 })
                 .Where(c => c.Ticks > 0)
                 .OrderByDescending(c => c.Ticks)
                 .ToList();
 
-            var libraryTotalTicks = allApps.Sum(a => a.TotalUsageTime.Ticks);
-            if (categoryTotals.Count > 0 && libraryTotalTicks > 0)
+            if (categoryTotals.Count > 0 && periodTicks > 0)
             {
                 var top = categoryTotals[0];
-                var topPercent = top.Ticks * 100.0 / libraryTotalTicks;
+                var topPercent = top.Ticks * 100.0 / periodTicks;
                 var topDuration = TimeSpan.FromTicks(top.Ticks);
                 insightsTrendsFlow.Controls.Add(BuildTrendItem(
                     $"{top.Category} is your top category",
                     $"You spent {topPercent:0}% of your time in {top.Category.ToLowerInvariant()} apps ({FormatDuration(topDuration)})."));
             }
 
-            // 3. Average session length (this week if available, otherwise all sessions)
-            var sessionSource = thisWeekSessions.Count > 0 ? thisWeekSessions : sessions;
-            if (sessionSource.Count > 0)
+            // 3. Average session length for the period
+            if (periodSessions.Count > 0)
             {
-                var avgTicks = sessionSource.Average(s => (s.EndTime - s.StartTime).TotalMinutes);
-                var avgMinutes = Math.Max(1, (int)Math.Round(avgTicks));
-                var scope = thisWeekSessions.Count > 0 ? "this week" : "overall";
+                var avgMinutes = Math.Max(1, (int)Math.Round(
+                    periodSessions.Average(s => Math.Max(0, (s.EndTime - s.StartTime).TotalMinutes))));
                 insightsTrendsFlow.Controls.Add(BuildTrendItem(
                     $"Your average session is {avgMinutes} minute{(avgMinutes == 1 ? "" : "s")}",
-                    $"Across {sessionSource.Count} session{(sessionSource.Count == 1 ? "" : "s")} {scope}."));
+                    $"Across {periodSessions.Count} session{(periodSessions.Count == 1 ? "" : "s")} {periodLabel}."));
             }
 
-            // 4. Most used app
-            var topApp = allApps.OrderByDescending(a => a.TotalUsageTime).FirstOrDefault();
-            if (topApp != null && topApp.TotalUsageTime > TimeSpan.Zero && libraryTotalTicks > 0)
+            // 4. Most used app within the period
+            var topAppGroup = periodSessions
+                .GroupBy(s => s.AppId)
+                .Select(g => (
+                    App: allApps.FirstOrDefault(a => a.Id == g.Key),
+                    Ticks: g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks))))
+                .Where(x => x.App != null && x.Ticks > 0)
+                .OrderByDescending(x => x.Ticks)
+                .FirstOrDefault();
+
+            if (topAppGroup.App != null && periodTicks > 0)
             {
-                var appPercent = topApp.TotalUsageTime.Ticks * 100.0 / libraryTotalTicks;
+                var appPercent = topAppGroup.Ticks * 100.0 / periodTicks;
                 insightsTrendsFlow.Controls.Add(BuildTrendItem(
-                    $"{topApp.Name} is your most used app",
-                    $"{FormatDuration(topApp.TotalUsageTime)} ({appPercent:0}% of total time)."));
+                    $"{topAppGroup.App.Name} is your most used app",
+                    $"{FormatDuration(TimeSpan.FromTicks(topAppGroup.Ticks))} ({appPercent:0}% of total time)."));
             }
 
             foreach (Control child in insightsTrendsFlow.Controls)
             {
                 child.Width = insightsTrendsFlow.Width;
             }
+        }
+
+        private (List<AppSession> Sessions, string Label) GetPreviousPeriodSessions(string period)
+        {
+            var today = DateTime.Today;
+            return period switch
+            {
+                "This Month" => (
+                    sessions.Where(s =>
+                    {
+                        var prevMonth = new DateTime(today.Year, today.Month, 1).AddMonths(-1);
+                        var thisMonth = new DateTime(today.Year, today.Month, 1);
+                        return s.StartTime.Date >= prevMonth && s.StartTime.Date < thisMonth;
+                    }).ToList(),
+                    "last month"),
+                "Last 3 Months" => (
+                    sessions.Where(s =>
+                    {
+                        var end = new DateTime(today.Year, today.Month, 1).AddMonths(-2);
+                        var start = end.AddMonths(-3);
+                        return s.StartTime.Date >= start && s.StartTime.Date < end;
+                    }).ToList(),
+                    "the prior 3 months"),
+                _ => (
+                    sessions.Where(s =>
+                    {
+                        var thisWeekStart = StartOfWeek(today);
+                        var lastWeekStart = thisWeekStart.AddDays(-7);
+                        return s.StartTime.Date >= lastWeekStart && s.StartTime.Date < thisWeekStart;
+                    }).ToList(),
+                    "last week")
+            };
         }
 
         private Control BuildTrendItem(string title, string detail)
@@ -759,10 +885,8 @@ namespace AppTime
             return row;
         }
 
-        // Top 5 apps by all-time tracked time - the same ranking already used for
-        // Overview's Recent/Most Used. Percentage is each app's share of total tracked
-        // time across the whole library, not just the apps shown.
-        private void PopulateMostUsedApplications()
+        // Top 5 apps by tracked time within the selected Insights period.
+        private void PopulateMostUsedApplications(List<AppSession> periodSessions)
         {
             mostUsedAppsFlow.Controls.Clear();
 
@@ -773,15 +897,22 @@ namespace AppTime
                 mostUsedAppsFlow.Width = Math.Max(200, mostUsedAppsFlow.Parent.Width - 32);
             }
 
-            var totalTrackedTicks = allApps.Sum(a => a.TotalUsageTime.Ticks);
+            var totalsByApp = periodSessions
+                .GroupBy(s => s.AppId)
+                .Select(g => (
+                    App: allApps.FirstOrDefault(a => a.Id == g.Key),
+                    Duration: TimeSpan.FromTicks(g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks)))))
+                .Where(x => x.App != null && x.Duration > TimeSpan.Zero)
+                .OrderByDescending(x => x.Duration)
+                .ToList();
 
-            var topApps = allApps.OrderByDescending(a => a.TotalUsageTime).Take(5).ToList();
+            var totalTrackedTicks = totalsByApp.Sum(x => x.Duration.Ticks);
 
-            if (topApps.Count == 0)
+            if (totalsByApp.Count == 0)
             {
                 mostUsedAppsFlow.Controls.Add(new Label
                 {
-                    Text = "No usage tracked yet.",
+                    Text = "No usage tracked for this period.",
                     AutoSize = true,
                     Font = AppTheme.Base,
                     ForeColor = AppTheme.TextSecondary
@@ -789,11 +920,12 @@ namespace AppTime
                 return;
             }
 
+            var topApps = totalsByApp.Take(5).ToList();
             for (var i = 0; i < topApps.Count; i++)
             {
-                var app = topApps[i];
-                var percent = totalTrackedTicks > 0 ? app.TotalUsageTime.Ticks * 100.0 / totalTrackedTicks : 0;
-                mostUsedAppsFlow.Controls.Add(BuildMostUsedAppRow(app, i + 1, percent));
+                var entry = topApps[i];
+                var percent = totalTrackedTicks > 0 ? entry.Duration.Ticks * 100.0 / totalTrackedTicks : 0;
+                mostUsedAppsFlow.Controls.Add(BuildMostUsedAppRow(entry.App!, i + 1, percent, entry.Duration));
             }
 
             // Force every row to the full flow width after they are added.
@@ -803,9 +935,10 @@ namespace AppTime
             }
         }
 
-        private Control BuildMostUsedAppRow(AppEntry app, int rank, double percentOfTotal)
+        private Control BuildMostUsedAppRow(AppEntry app, int rank, double percentOfTotal, TimeSpan? periodDuration = null)
         {
             var contentWidth = Math.Max(280, mostUsedAppsFlow.Width);
+            var displayDuration = periodDuration ?? app.TotalUsageTime;
 
             var content = new TableLayoutPanel
             {
@@ -853,7 +986,7 @@ namespace AppTime
 
             content.Controls.Add(new Label
             {
-                Text = FormatDuration(app.TotalUsageTime),
+                Text = FormatDuration(displayDuration),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = AppTheme.Base,
@@ -1369,6 +1502,11 @@ namespace AppTime
                 var capturedPeriod = period;
                 tabButton.Click += (_, _) =>
                 {
+                    if (selectedHistoryPeriod == capturedPeriod)
+                    {
+                        return;
+                    }
+
                     selectedHistoryPeriod = capturedPeriod;
                     PopulateHistory();
                 };
@@ -1432,7 +1570,7 @@ namespace AppTime
         {
             UpdatePeriodTabAppearance();
 
-            historyFilteredSessions = FilterSessionsByPeriod(sessions, selectedHistoryPeriod)
+            historyFilteredSessions = GetSessionsForPeriod(selectedHistoryPeriod)
                 .OrderByDescending(s => s.StartTime)
                 .ToList();
 
@@ -1441,14 +1579,14 @@ namespace AppTime
 
             historySessionsCountValueLabel.Text = historyFilteredSessions.Count.ToString();
 
-            var totalTime = TimeSpan.FromTicks(historyFilteredSessions.Sum(s => (s.EndTime - s.StartTime).Ticks));
+            var totalTime = TimeSpan.FromTicks(historyFilteredSessions.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks)));
             historyTotalTimeValueLabel.Text = FormatDuration(totalTime);
 
             var mostUsedAppName = historyFilteredSessions
                 .GroupBy(s => s.AppId)
                 .Select(g => (
                     Name: allApps.FirstOrDefault(a => a.Id == g.Key)?.Name ?? "Removed app",
-                    Total: TimeSpan.FromTicks(g.Sum(s => (s.EndTime - s.StartTime).Ticks))))
+                    Total: TimeSpan.FromTicks(g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks)))))
                 .OrderByDescending(x => x.Total)
                 .Select(x => x.Name)
                 .FirstOrDefault();
@@ -1472,10 +1610,33 @@ namespace AppTime
             return period switch
             {
                 "Today" => source.Where(s => s.StartTime.Date == today),
-                "This Week" => source.Where(s => s.StartTime.Date >= StartOfWeek(today)),
-                "This Month" => source.Where(s => s.StartTime.Date >= new DateTime(today.Year, today.Month, 1)),
+                "This Week" => source.Where(s => s.StartTime.Date >= StartOfWeek(today) && s.StartTime.Date <= today),
+                "This Month" => source.Where(s => s.StartTime.Date >= new DateTime(today.Year, today.Month, 1) && s.StartTime.Date <= today),
+                "Last 3 Months" => source.Where(s =>
+                {
+                    var start = new DateTime(today.Year, today.Month, 1).AddMonths(-2);
+                    return s.StartTime.Date >= start && s.StartTime.Date <= today;
+                }),
                 _ => source
             };
+        }
+
+        // Completed sessions for the period, plus any currently-running apps as
+        // open-ended sessions so live usage is reflected on both pages.
+        private IEnumerable<AppSession> GetSessionsForPeriod(string period)
+        {
+            var completed = FilterSessionsByPeriod(sessions, period);
+            var now = DateTime.Now;
+            var active = activeSessionStarts
+                .Select(kvp => new AppSession
+                {
+                    AppId = kvp.Key,
+                    StartTime = kvp.Value,
+                    EndTime = now
+                })
+                .Where(s => FilterSessionsByPeriod(new[] { s }, period).Any());
+
+            return completed.Concat(active);
         }
 
         private void UpdatePeriodTabAppearance()
@@ -2218,6 +2379,11 @@ namespace AppTime
                     UpdateOverviewTodayCard();
                     UpdateOverviewThisWeekCard();
                     UpdateUsageTodayChart();
+                }
+
+                if (item.ViewKey == "Usage")
+                {
+                    PopulateInsights();
                 }
 
                 if (item.ViewKey == "History")
