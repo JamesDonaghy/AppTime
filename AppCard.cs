@@ -200,6 +200,7 @@ namespace AppTime
         {
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
             var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
             using var path = RoundedRect(bounds, CornerRadius);
@@ -218,14 +219,24 @@ namespace AppTime
 
             var contentRect = new Rectangle(ContentPadding, ContentPadding, Width - ContentPadding * 2, Height - ContentPadding * 2);
 
-            // Category, top-left - small and muted so the name reads first.
-            TextRenderer.DrawText(g, App.Category, AppTheme.SmallText, contentRect, AppTheme.TextSecondary,
-                TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+            // App icon, top-left. Extracted from the executable (or a letter tile fallback).
+            const int iconSize = 28;
+            var icon = AppIconCache.GetIcon(App, iconSize);
+            g.DrawImage(icon, contentRect.Left, contentRect.Top, iconSize, iconSize);
 
-            // Application name, roughly centred vertically in the middle of the card.
-            var nameRect = new Rectangle(contentRect.Left, contentRect.Top + 22, contentRect.Width, 40);
+            // Category sits to the right of the icon so the top row stays compact.
+            var categoryRect = new Rectangle(
+                contentRect.Left + iconSize + 8,
+                contentRect.Top,
+                Math.Max(0, contentRect.Width - iconSize - 8 - 12),
+                iconSize);
+            TextRenderer.DrawText(g, App.Category, AppTheme.SmallText, categoryRect, AppTheme.TextSecondary,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+            // Application name below the icon row.
+            var nameRect = new Rectangle(contentRect.Left, contentRect.Top + iconSize + 6, contentRect.Width, 36);
             TextRenderer.DrawText(g, App.Name, AppTheme.CardTitle, nameRect, AppTheme.TextPrimary,
-                TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+                TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
             // Small dot, top-right - whether the app's process is currently running.
             // Paired with the action button's own "Running" state below, rather than

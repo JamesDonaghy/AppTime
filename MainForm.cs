@@ -54,6 +54,7 @@ namespace AppTime
         private Panel detailsPanel = null!;
         private AppEntry? currentDetailsApp;
         private Label detailsBackLink = null!;
+        private PictureBox detailsIconPicture = null!;
         private Label detailsNameLabel = null!;
         private Label detailsCategoryPill = null!;
         private Label detailsUsageValueLabel = null!;
@@ -90,7 +91,7 @@ namespace AppTime
             BackColor = AppTheme.Background;
             Font = AppTheme.Base;
             MinimumSize = new Size(1100, 720);
-            Size = new Size(1320, 800);
+            Size = new Size(1320, 820);
             StartPosition = FormStartPosition.CenterScreen;
 
             // Owner-drawn child controls (AppCard, SidebarItem) look considerably worse
@@ -669,7 +670,10 @@ namespace AppTime
                 AutoSize = true,
                 Location = new Point(16, 14),
                 Font = AppTheme.SectionHeading,
-                ForeColor = AppTheme.TextPrimary
+                ForeColor = AppTheme.TextPrimary,
+                // WinForms treats & as a mnemonic (accelerator); turn that off so the
+                // ampersand is shown literally rather than eaten for the next letter.
+                UseMnemonic = false
             });
 
             insightsTrendsFlow = new FlowLayoutPanel
@@ -943,13 +947,14 @@ namespace AppTime
             var content = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 5,
+                ColumnCount = 6,
                 RowCount = 1,
                 // Prevent the table from collapsing its percentage columns
                 // when the parent flow panel is still laying out.
-                MinimumSize = new Size(280, 36)
+                MinimumSize = new Size(280, 40)
             };
-            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 24f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40f));
@@ -965,12 +970,36 @@ namespace AppTime
                 ForeColor = AppTheme.TextSecondary
             }, 0, 0);
 
+            // Fixed-size icon centered in its cell so it never clips against the
+            // row bounds or the neighbouring columns.
+            const int iconSize = 24;
+            var iconBox = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0)
+            };
+            var iconPicture = new PictureBox
+            {
+                Image = AppIconCache.GetIcon(app, iconSize),
+                SizeMode = PictureBoxSizeMode.CenterImage,
+                Size = new Size(iconSize, iconSize),
+                BackColor = Color.Transparent
+            };
+            iconBox.Controls.Add(iconPicture);
+            iconBox.Resize += (_, _) =>
+            {
+                iconPicture.Location = new Point(
+                    Math.Max(0, (iconBox.ClientSize.Width - iconSize) / 2),
+                    Math.Max(0, (iconBox.ClientSize.Height - iconSize) / 2));
+            };
+            content.Controls.Add(iconBox, 1, 0);
+
             var nameCell = new Panel { Dock = DockStyle.Fill };
             nameCell.Controls.Add(new Label
             {
                 Text = app.Name,
                 AutoSize = true,
-                Location = new Point(0, 1),
+                Location = new Point(0, 4),
                 Font = AppTheme.CardTitle,
                 ForeColor = AppTheme.TextPrimary
             });
@@ -978,11 +1007,11 @@ namespace AppTime
             {
                 Text = app.Category,
                 AutoSize = true,
-                Location = new Point(0, 19),
+                Location = new Point(0, 24),
                 Font = AppTheme.SmallText,
                 ForeColor = AppTheme.TextSecondary
             });
-            content.Controls.Add(nameCell, 1, 0);
+            content.Controls.Add(nameCell, 2, 0);
 
             content.Controls.Add(new Label
             {
@@ -991,7 +1020,7 @@ namespace AppTime
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = AppTheme.Base,
                 ForeColor = AppTheme.TextSecondary
-            }, 2, 0);
+            }, 3, 0);
 
             content.Controls.Add(new Label
             {
@@ -1000,7 +1029,7 @@ namespace AppTime
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = AppTheme.Base,
                 ForeColor = AppTheme.TextSecondary
-            }, 3, 0);
+            }, 4, 0);
 
             // Inline bar, colour-coded by category, sitting on the same line as the
             // rest of the row rather than dropped below it.
@@ -1011,16 +1040,16 @@ namespace AppTime
                 FillColor = AppTheme.CategoryColor(app.Category)
             };
             usageBar.SetPercent(percentOfTotal);
-            content.Controls.Add(usageBar, 4, 0);
+            content.Controls.Add(usageBar, 5, 0);
 
             // Wrapper with an inset hairline under the row (same treatment as
             // the Sessions list) so dividers don't run edge-to-edge.
             var wrapper = new Panel
             {
                 Width = contentWidth,
-                Height = 42,
+                Height = 48,
                 Margin = new Padding(0, 0, 0, 2),
-                MinimumSize = new Size(280, 42)
+                MinimumSize = new Size(280, 48)
             };
             wrapper.Controls.Add(content);
 
@@ -1120,7 +1149,7 @@ namespace AppTime
             return panel;
         }
 
-        // Back link, app name, category "pill", and the tracked-time line.
+        // Back link, app icon, name, category "pill", and the tracked-time line.
         private Panel BuildDetailsSummary()
         {
             var summary = new Panel { Dock = DockStyle.Fill };
@@ -1142,10 +1171,22 @@ namespace AppTime
             };
             summary.Controls.Add(detailsBackLink);
 
+            const int iconSize = 40;
+            detailsIconPicture = new PictureBox
+            {
+                Size = new Size(iconSize, iconSize),
+                Location = new Point(0, 28),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent
+            };
+            summary.Controls.Add(detailsIconPicture);
+
+            const int textLeft = iconSize + 12;
+
             detailsNameLabel = new Label
             {
                 AutoSize = true,
-                Location = new Point(0, 26),
+                Location = new Point(textLeft, 26),
                 Font = AppTheme.Heading,
                 ForeColor = AppTheme.TextPrimary
             };
@@ -1157,7 +1198,7 @@ namespace AppTime
             detailsCategoryPill = new Label
             {
                 AutoSize = true,
-                Location = new Point(0, 58),
+                Location = new Point(textLeft, 58),
                 Font = new Font(AppTheme.SmallText, FontStyle.Bold),
                 ForeColor = AppTheme.Accent,
                 BackColor = AppTheme.AccentSubtle,
@@ -1171,7 +1212,7 @@ namespace AppTime
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 WrapContents = false,
-                Location = new Point(0, 92)
+                Location = new Point(textLeft, 92)
             };
             usageRow.Controls.Add(new Label
             {
@@ -1363,6 +1404,7 @@ namespace AppTime
                 ? $"← Back to {selectedSidebarItem.DisplayText}"
                 : "← Back";
 
+            detailsIconPicture.Image = AppIconCache.GetIcon(app, 40);
             detailsNameLabel.Text = app.Name;
             detailsCategoryPill.Text = app.Category;
 
@@ -1727,9 +1769,8 @@ namespace AppTime
 
         // Name + category, time range, duration, a "Running" pill when applicable,
         // and a chevron - the whole row is clickable through to that app's Details
-        // view (skipped for a session whose app has since been removed). Icons/logos
-        // are intentionally left out for now. An inset hairline divider sits under
-        // the content so it doesn't run edge-to-edge across the list.
+        // view (skipped for a session whose app has since been removed). An inset
+        // hairline divider sits under the content so it doesn't run edge-to-edge.
         private Control BuildSessionListRow(AppSession session)
         {
             var app = allApps.FirstOrDefault(a => a.Id == session.AppId);
@@ -1742,17 +1783,31 @@ namespace AppTime
             var content = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 5,
+                ColumnCount = 6,
                 RowCount = 1,
                 // Leave room at the bottom for the divider line.
                 Padding = new Padding(0, 0, 0, 1)
             };
-            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
-            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 10f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12f));
             content.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            const int iconSize = 24;
+            var iconBox = new Panel { Dock = DockStyle.Fill };
+            var iconPicture = new PictureBox
+            {
+                Image = AppIconCache.GetIcon(app, iconSize),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Size = new Size(iconSize, iconSize),
+                Location = new Point(0, 14),
+                BackColor = Color.Transparent
+            };
+            iconBox.Controls.Add(iconPicture);
+            content.Controls.Add(iconBox, 0, 0);
 
             var nameCell = new Panel { Dock = DockStyle.Fill };
             nameCell.Controls.Add(new Label
@@ -1771,7 +1826,7 @@ namespace AppTime
                 Font = AppTheme.SmallText,
                 ForeColor = AppTheme.TextSecondary
             });
-            content.Controls.Add(nameCell, 0, 0);
+            content.Controls.Add(nameCell, 1, 0);
 
             content.Controls.Add(new Label
             {
@@ -1780,7 +1835,7 @@ namespace AppTime
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = AppTheme.Base,
                 ForeColor = AppTheme.TextSecondary
-            }, 1, 0);
+            }, 2, 0);
 
             content.Controls.Add(new Label
             {
@@ -1789,7 +1844,7 @@ namespace AppTime
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = AppTheme.Base,
                 ForeColor = AppTheme.TextSecondary
-            }, 2, 0);
+            }, 3, 0);
 
             var statusCell = new Panel { Dock = DockStyle.Fill };
             if (isCurrentlyRunning)
@@ -1805,7 +1860,7 @@ namespace AppTime
                     Padding = new Padding(8, 3, 8, 3)
                 });
             }
-            content.Controls.Add(statusCell, 3, 0);
+            content.Controls.Add(statusCell, 4, 0);
 
             content.Controls.Add(new Label
             {
@@ -1814,7 +1869,7 @@ namespace AppTime
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = new Font(AppTheme.CardTitle.FontFamily, 12f),
                 ForeColor = AppTheme.TextSecondary
-            }, 4, 0);
+            }, 5, 0);
 
             // Wrapper so we can draw an inset divider that doesn't span the full width.
             var wrapper = new Panel { Dock = DockStyle.Fill };
@@ -2776,9 +2831,16 @@ namespace AppTime
                 return;
             }
 
+            var previousPath = app.ExecutablePath;
             app.Name = editForm.ApplicationName;
             app.Category = editForm.Category;
             app.ExecutablePath = editForm.ExecutablePath;
+
+            if (!string.Equals(previousPath, app.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+            {
+                AppIconCache.Invalidate(previousPath);
+                AppIconCache.Invalidate(app.ExecutablePath);
+            }
 
             LibraryStorage.SaveLibrary(allApps);
             ApplyFilter();
