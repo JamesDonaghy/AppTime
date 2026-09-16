@@ -44,10 +44,19 @@ namespace AppTime
         private Label historyMostUsedAppValueLabel = null!;
         private Label historySessionsHeadingLabel = null!;
         private Label historySummaryLabel = null!;
+        private ComboBox historyAppFilterCombo = null!;
+        private ComboBox historyCategoryFilterCombo = null!;
+        // null = All Applications / All Categories
+        private Guid? selectedHistoryAppFilter;
+        private string? selectedHistoryCategoryFilter;
+        private bool suppressHistoryFilterEvents;
         // Simple pagination for the Sessions list - only the most recent N rows are
         // materialised as controls; "Load More" reveals the next batch.
-        private const int HistoryInitialCount = 6;
+        private const int HistoryInitialCount = 7;
         private const int HistoryPageSize = 20;
+        // Height of each session row. Deep enough for name + category; padding kept
+        // tight so the gap under the text matches the hairline divider.
+        private const int SessionRowHeight = 52;
         private List<AppSession> historyFilteredSessions = new();
         private int historyVisibleCount = HistoryInitialCount;
         private UsageTodayChart usageChart = null!;
@@ -1436,31 +1445,36 @@ namespace AppTime
                 Padding = new Padding(28, 16, 28, 20)
             };
 
-            // Title/subtitle, period tabs, and stat cards are stacked via explicit
-            // (column, row) placement. The session list lives in its own bordered
-            // card below (heading + rows), matching the design mock.
+            // Title/subtitle, period tabs + filters, and stat cards are stacked via
+            // explicit (column, row) placement. The session list lives in its own
+            // bordered card below (heading + rows), matching the design mock.
+            // Stat cards row matches Insights summary height (80) so the three cards
+            // read the same size on both pages.
             var topSection = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 56 + 48 + 110,
+                Height = 56 + 48 + 80,
                 ColumnCount = 1,
                 RowCount = 3
             };
             topSection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
             topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
             topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
-            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 110f));
+            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 80f));
 
             topSection.Controls.Add(BuildSessionsPageTitle(), 0, 0);
-            topSection.Controls.Add(BuildPeriodTabsRow(), 0, 1);
+            topSection.Controls.Add(BuildPeriodAndFiltersRow(), 0, 1);
             topSection.Controls.Add(BuildSessionsStatsRow(), 0, 2);
 
-            // Bordered card wrapping "Today's Sessions" header + the scrollable list.
+            // Bordered card wrapping "Today's Sessions" header + the list.
+            // The card scrolls when the list is long; the table itself shrink-wraps
+            // to its rows so there is no empty band under "Load More".
             var sessionsCard = new RoundedPanel
             {
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0),
-                Padding = new Padding(16, 12, 16, 12)
+                Padding = new Padding(16, 12, 16, 12),
+                AutoScroll = true
             };
 
             var cardHeader = BuildSessionsSummaryRow();
@@ -1469,10 +1483,11 @@ namespace AppTime
 
             historyTable = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 0),
+                Padding = new Padding(0),
                 BackColor = AppTheme.CardBackground
             };
             historyTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -1516,15 +1531,21 @@ namespace AppTime
             return titlePanel;
         }
 
-        // "Custom" isn't included yet - Today/This Week/This Month cover the useful
-        // cases for now, and a custom range picker is its own separate task.
-        private FlowLayoutPanel BuildPeriodTabsRow()
+        // Period tabs on the left; application + category filter dropdowns on the right
+        // (matches the Sessions redesign mock). Custom date range is still a
+        // separate task.
+        private Panel BuildPeriodAndFiltersRow()
         {
-            var row = new FlowLayoutPanel
+            var row = new Panel { Dock = DockStyle.Fill };
+
+            var tabs = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Left,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false
+                WrapContents = false,
+                Padding = new Padding(0, 4, 0, 0)
             };
 
             foreach (var period in new[] { "Today", "This Week", "This Month" })
@@ -1554,10 +1575,167 @@ namespace AppTime
                 };
 
                 periodTabButtons[period] = tabButton;
-                row.Controls.Add(tabButton);
+                tabs.Controls.Add(tabButton);
             }
 
+            var filters = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(0, 4, 0, 0)
+            };
+
+            historyAppFilterCombo = CreateSessionsFilterCombo(180);
+            historyAppFilterCombo.SelectedIndexChanged += (_, _) =>
+            {
+                if (suppressHistoryFilterEvents)
+                {
+                    return;
+                }
+
+                if (historyAppFilterCombo.SelectedItem is FilterOption option)
+                {
+                    selectedHistoryAppFilter = option.AppId;
+                    PopulateHistory();
+                }
+            };
+
+            historyCategoryFilterCombo = CreateSessionsFilterCombo(160);
+            historyCategoryFilterCombo.SelectedIndexChanged += (_, _) =>
+            {
+                if (suppressHistoryFilterEvents)
+                {
+                    return;
+                }
+
+                if (historyCategoryFilterCombo.SelectedItem is FilterOption option)
+                {
+                    selectedHistoryCategoryFilter = option.Category;
+                    PopulateHistory();
+                }
+            };
+
+            filters.Controls.Add(historyAppFilterCombo);
+            filters.Controls.Add(historyCategoryFilterCombo);
+
+            // Right-docked filters first so Left tabs keep the remaining space cleanly.
+            row.Controls.Add(filters);
+            row.Controls.Add(tabs);
+
+            RefreshSessionFilterOptions();
+
             return row;
+        }
+
+        private static ComboBox CreateSessionsFilterCombo(int width)
+        {
+            return new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Width = width,
+                Height = 32,
+                Margin = new Padding(8, 0, 0, 0),
+                Font = AppTheme.Base,
+                BackColor = AppTheme.CardBackground,
+                ForeColor = AppTheme.TextPrimary
+            };
+        }
+
+        // Display text + optional app/category keys for the Sessions filter combos.
+        private sealed class FilterOption
+        {
+            public string Text { get; }
+            public Guid? AppId { get; }
+            public string? Category { get; }
+
+            public FilterOption(string text, Guid? appId = null, string? category = null)
+            {
+                Text = text;
+                AppId = appId;
+                Category = category;
+            }
+
+            public override string ToString() => Text;
+        }
+
+        private void RefreshSessionFilterOptions()
+        {
+            if (historyAppFilterCombo is null || historyCategoryFilterCombo is null)
+            {
+                return;
+            }
+
+            // Preserve current selection while rebuilding items.
+            var previousAppId = selectedHistoryAppFilter;
+            var previousCategory = selectedHistoryCategoryFilter;
+
+            suppressHistoryFilterEvents = true;
+            historyAppFilterCombo.BeginUpdate();
+            historyCategoryFilterCombo.BeginUpdate();
+            try
+            {
+                historyAppFilterCombo.Items.Clear();
+                historyAppFilterCombo.Items.Add(new FilterOption("All Applications"));
+                foreach (var app in allApps.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    historyAppFilterCombo.Items.Add(new FilterOption(app.Name, appId: app.Id));
+                }
+
+                historyCategoryFilterCombo.Items.Clear();
+                historyCategoryFilterCombo.Items.Add(new FilterOption("All Categories"));
+                foreach (var category in allApps
+                    .Select(a => string.IsNullOrWhiteSpace(a.Category) ? "Other" : a.Category)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
+                {
+                    historyCategoryFilterCombo.Items.Add(new FilterOption(category, category: category));
+                }
+
+                // App: match by id; null id is the "All Applications" entry.
+                SelectFilterOption(historyAppFilterCombo, o => o.AppId == previousAppId);
+                // Category: match by name; null is the "All Categories" entry.
+                SelectFilterOption(historyCategoryFilterCombo, o =>
+                    string.Equals(o.Category, previousCategory, StringComparison.OrdinalIgnoreCase));
+
+                // Keep filter fields in sync with whatever ended up selected (e.g. if an
+                // app was removed from the library).
+                if (historyAppFilterCombo.SelectedItem is FilterOption appOption)
+                {
+                    selectedHistoryAppFilter = appOption.AppId;
+                }
+
+                if (historyCategoryFilterCombo.SelectedItem is FilterOption categoryOption)
+                {
+                    selectedHistoryCategoryFilter = categoryOption.Category;
+                }
+            }
+            finally
+            {
+                historyAppFilterCombo.EndUpdate();
+                historyCategoryFilterCombo.EndUpdate();
+                suppressHistoryFilterEvents = false;
+            }
+        }
+
+        private static void SelectFilterOption(ComboBox combo, Func<FilterOption, bool> match)
+        {
+            for (var i = 0; i < combo.Items.Count; i++)
+            {
+                if (combo.Items[i] is FilterOption option && match(option))
+                {
+                    combo.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            if (combo.Items.Count > 0)
+            {
+                combo.SelectedIndex = 0;
+            }
         }
 
         private TableLayoutPanel BuildSessionsStatsRow()
@@ -1607,16 +1785,18 @@ namespace AppTime
         }
 
         // Rebuilds the whole Sessions page (stat cards, summary line, and the row
-        // list) for whichever period tab is currently selected.
+        // list) for the current period + application/category filters.
         private void PopulateHistory()
         {
             UpdatePeriodTabAppearance();
+            RefreshSessionFilterOptions();
 
             historyFilteredSessions = GetSessionsForPeriod(selectedHistoryPeriod)
+                .Where(MatchesHistoryFilters)
                 .OrderByDescending(s => s.StartTime)
                 .ToList();
 
-            // Reset to the first page whenever the period (or underlying data) changes.
+            // Reset to the first page whenever the period or filters change.
             historyVisibleCount = HistoryInitialCount;
 
             historySessionsCountValueLabel.Text = historyFilteredSessions.Count.ToString();
@@ -1624,15 +1804,22 @@ namespace AppTime
             var totalTime = TimeSpan.FromTicks(historyFilteredSessions.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks)));
             historyTotalTimeValueLabel.Text = FormatDuration(totalTime);
 
-            var mostUsedAppName = historyFilteredSessions
+            var mostUsed = historyFilteredSessions
                 .GroupBy(s => s.AppId)
                 .Select(g => (
                     Name: allApps.FirstOrDefault(a => a.Id == g.Key)?.Name ?? "Removed app",
                     Total: TimeSpan.FromTicks(g.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks)))))
                 .OrderByDescending(x => x.Total)
-                .Select(x => x.Name)
                 .FirstOrDefault();
-            historyMostUsedAppValueLabel.Text = mostUsedAppName ?? "—";
+
+            if (mostUsed.Total > TimeSpan.Zero)
+            {
+                historyMostUsedAppValueLabel.Text = mostUsed.Name;
+            }
+            else
+            {
+                historyMostUsedAppValueLabel.Text = "—";
+            }
 
             historySessionsHeadingLabel.Text = selectedHistoryPeriod switch
             {
@@ -1643,7 +1830,30 @@ namespace AppTime
             };
             historySummaryLabel.Text = $"{historyFilteredSessions.Count} sessions  ·  {FormatDuration(totalTime)} total";
 
-            PopulateSessionsList(historyTable, "No sessions recorded for this period.");
+            var emptyMessage = selectedHistoryAppFilter is not null || selectedHistoryCategoryFilter is not null
+                ? "No sessions match the current filters."
+                : "No sessions recorded for this period.";
+            PopulateSessionsList(historyTable, emptyMessage);
+        }
+
+        private bool MatchesHistoryFilters(AppSession session)
+        {
+            if (selectedHistoryAppFilter is Guid appId && session.AppId != appId)
+            {
+                return false;
+            }
+
+            if (selectedHistoryCategoryFilter is not null)
+            {
+                var app = allApps.FirstOrDefault(a => a.Id == session.AppId);
+                var category = string.IsNullOrWhiteSpace(app?.Category) ? "Other" : app!.Category;
+                if (!string.Equals(category, selectedHistoryCategoryFilter, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static IEnumerable<AppSession> FilterSessionsByPeriod(IEnumerable<AppSession> source, string period)
@@ -1714,7 +1924,8 @@ namespace AppTime
                     Font = AppTheme.Base,
                     ForeColor = AppTheme.TextSecondary
                 }, 0, 0);
-                table.ResumeLayout();
+                table.ResumeLayout(true);
+                table.Parent?.PerformLayout();
                 return;
             }
 
@@ -1723,7 +1934,8 @@ namespace AppTime
             for (var i = 0; i < showCount; i++)
             {
                 table.RowCount = i + 1;
-                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 56f));
+                // See SessionRowHeight constant near the top of MainForm.
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, SessionRowHeight));
                 var row = BuildSessionListRow(historyFilteredSessions[i]);
                 row.Dock = DockStyle.Fill;
                 table.Controls.Add(row, 0, i);
@@ -1734,11 +1946,38 @@ namespace AppTime
                 var remaining = historyFilteredSessions.Count - showCount;
                 var loadMoreRow = table.RowCount;
                 table.RowCount = loadMoreRow + 1;
-                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 44f));
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
                 table.Controls.Add(BuildLoadMoreSessionsButton(remaining), 0, loadMoreRow);
             }
 
-            table.ResumeLayout();
+            table.ResumeLayout(true);
+
+            // Shrink-wrap height to the sum of absolute rows so the table does not
+            // stretch and leave a blank band under the last row / Load More.
+            var contentHeight = 0;
+            foreach (RowStyle style in table.RowStyles)
+            {
+                if (style.SizeType == SizeType.Absolute)
+                {
+                    contentHeight += (int)style.Height;
+                }
+            }
+
+            table.Height = Math.Max(contentHeight, 1);
+            table.Parent?.PerformLayout();
+
+            // Keep the sessions card scrolled to the top after period/filter changes.
+            if (table.Parent is ScrollableControl scrollParent)
+            {
+                try
+                {
+                    scrollParent.AutoScrollPosition = new Point(0, 0);
+                }
+                catch
+                {
+                    // Handle may not exist yet during first layout.
+                }
+            }
         }
 
         private Control BuildLoadMoreSessionsButton(int remainingCount)
@@ -1788,7 +2027,7 @@ namespace AppTime
                 // Leave room at the bottom for the divider line.
                 Padding = new Padding(0, 0, 0, 1)
             };
-            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 32f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22f));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16f));
@@ -1796,19 +2035,21 @@ namespace AppTime
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12f));
             content.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
-            const int iconSize = 24;
+            const int iconSize = 22;
             var iconBox = new Panel { Dock = DockStyle.Fill };
             var iconPicture = new PictureBox
             {
                 Image = AppIconCache.GetIcon(app, iconSize),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Size = new Size(iconSize, iconSize),
-                Location = new Point(0, 14),
+                Location = new Point(2, 13),
                 BackColor = Color.Transparent
             };
             iconBox.Controls.Add(iconPicture);
             content.Controls.Add(iconBox, 0, 0);
 
+            // Name + category: enough depth for both lines, minimal empty pad
+            // above the divider (SessionRowHeight = 52).
             var nameCell = new Panel { Dock = DockStyle.Fill };
             nameCell.Controls.Add(new Label
             {
@@ -1822,7 +2063,7 @@ namespace AppTime
             {
                 Text = category,
                 AutoSize = true,
-                Location = new Point(0, 28),
+                Location = new Point(0, 26),
                 Font = AppTheme.SmallText,
                 ForeColor = AppTheme.TextSecondary
             });
@@ -1853,11 +2094,11 @@ namespace AppTime
                 {
                     Text = "Running",
                     AutoSize = true,
-                    Location = new Point(0, 10),
+                    Location = new Point(0, 12),
                     Font = new Font(AppTheme.SmallText, FontStyle.Bold),
                     ForeColor = AppTheme.Success,
                     BackColor = AppTheme.SuccessSubtle,
-                    Padding = new Padding(8, 3, 8, 3)
+                    Padding = new Padding(8, 2, 8, 2)
                 });
             }
             content.Controls.Add(statusCell, 4, 0);
@@ -2138,9 +2379,16 @@ namespace AppTime
         // Adds a stat card to the given cell, with a small gap to its neighbours
         // (none on the outer edges) so the row lines up flush with the section above.
         // Callers keep the value label so its text can be refreshed with real data later.
-        private void AddStatCard(TableLayoutPanel table, string label, string value, int column, int columnCount, out Label valueLabel)
+        private void AddStatCard(
+            TableLayoutPanel table,
+            string label,
+            string value,
+            int column,
+            int columnCount,
+            out Label valueLabel,
+            bool largeValue = false)
         {
-            var card = BuildStatCard(label, value, out valueLabel);
+            var card = BuildStatCard(label, value, out valueLabel, largeValue);
             card.Dock = DockStyle.Fill;
             card.Margin = GridCellMargin(column, columnCount, gap: 16);
             table.Controls.Add(card, column, 0);
@@ -2242,7 +2490,7 @@ namespace AppTime
             return new Padding(left, 0, right, 0);
         }
 
-        private Panel BuildStatCard(string label, string value, out Label valueLabel)
+        private Panel BuildStatCard(string label, string value, out Label valueLabel, bool largeValue = false)
         {
             var card = new RoundedPanel();
 
@@ -2259,8 +2507,8 @@ namespace AppTime
             {
                 Text = value,
                 AutoSize = true,
-                Location = new Point(16, 38),
-                Font = AppTheme.CardTitle,
+                Location = new Point(16, largeValue ? 40 : 38),
+                Font = largeValue ? AppTheme.StatValue : AppTheme.CardTitle,
                 ForeColor = AppTheme.TextPrimary
             };
             card.Controls.Add(valueLabel);

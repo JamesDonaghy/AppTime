@@ -83,5 +83,7 @@ namespace AppTime
         public static Font Heading => new Font(FontFamily, 16f, FontStyle.Bold);
         public static Font SectionHeading => new Font(FontFamily, 10.5f, FontStyle.Bold);
         public static Font CardTitle => new Font(FontFamily, 10f, FontStyle.Bold);
+        // Large value text on Sessions (and similar) summary cards.
+        public static Font StatValue => new Font(FontFamily, 18f, FontStyle.Bold);
     }
 }
