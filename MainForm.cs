@@ -70,8 +70,13 @@ namespace AppTime
         private Label detailsTodayValueLabel = null!;
         private Label detailsThisWeekValueLabel = null!;
         private Label detailsSessionsCountValueLabel = null!;
+        private Panel detailsStatusPanel = null!;
+        private Label detailsStatusTitleLabel = null!;
+        private Label detailsStatusMetaLabel = null!;
         private Button detailsActionButton = null!;
         private bool detailsActionButtonHovered;
+        private ComboBox detailsSessionFilterCombo = null!;
+        private string detailsSessionFilter = "All Sessions";
         private TableLayoutPanel detailsSessionsTable = null!;
 
         // Polls every few seconds for whether each app's process is currently running,
@@ -1098,9 +1103,8 @@ namespace AppTime
             return box;
         }
 
-        // Details view for a single app: header (icon, name, total time, Start/Stop),
-        // Today / This Week / Sessions stats, then that app's session history.
-        // Not part of the sidebar nav — "Back" re-shows the previous sidebar view.
+        // Details view matching the profile mock: header + running status card,
+        // Today / This Week / Sessions stats, session history card with day groups.
         private Panel BuildDetailsPanel()
         {
             var panel = new Panel
@@ -1113,46 +1117,106 @@ namespace AppTime
             var topSection = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 150 + 88 + 40,
+                Height = 150 + 88,
                 ColumnCount = 1,
-                RowCount = 3
+                RowCount = 2
             };
             topSection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            // Extra height so the large total + "Total tracked time" caption are not clipped.
             topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 150f));
             topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 88f));
-            topSection.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
 
             topSection.Controls.Add(BuildDetailsSummary(), 0, 0);
             topSection.Controls.Add(BuildDetailsStatsRow(), 0, 1);
 
-            var sessionsHeading = new Label
+            // Session history card: table shrink-wraps to rows; card scrolls when needed
+            // so there is no empty band under the last session.
+            var historyCard = new RoundedPanel
             {
-                Text = "Session History",
-                AutoSize = true,
-                Margin = new Padding(0, 8, 0, 0),
-                Font = AppTheme.SectionHeading,
-                ForeColor = AppTheme.TextPrimary
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 12, 0, 0),
+                Padding = new Padding(16, 12, 16, 12),
+                AutoScroll = true
             };
-            topSection.Controls.Add(sessionsHeading, 0, 2);
+
+            var historyHeader = BuildDetailsHistoryHeader();
+            historyHeader.Dock = DockStyle.Top;
+            historyHeader.Height = 36;
 
             detailsSessionsTable = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 0)
+                Padding = new Padding(0, 4, 0, 0),
+                BackColor = AppTheme.CardBackground
             };
             detailsSessionsTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
 
-            panel.Controls.Add(detailsSessionsTable);
+            historyCard.Controls.Add(detailsSessionsTable);
+            historyCard.Controls.Add(historyHeader);
+
+            panel.Controls.Add(historyCard);
             panel.Controls.Add(topSection);
 
             return panel;
         }
 
-        // Back link, app icon, name, category pill, total tracked time, and a
-        // primary Start / Running / Stop button (top-right).
+        private Panel BuildDetailsHistoryHeader()
+        {
+            var header = new Panel { Dock = DockStyle.Fill };
+
+            header.Controls.Add(new Label
+            {
+                Text = "Session History",
+                AutoSize = true,
+                Location = new Point(0, 8),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+
+            detailsSessionFilterCombo = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                Width = 140,
+                Height = 28,
+                Font = AppTheme.Base,
+                BackColor = AppTheme.CardBackground,
+                ForeColor = AppTheme.TextPrimary,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            detailsSessionFilterCombo.Items.AddRange(new object[]
+            {
+                "All Sessions",
+                "This Week",
+                "This Month"
+            });
+            detailsSessionFilterCombo.SelectedIndex = 0;
+            detailsSessionFilterCombo.SelectedIndexChanged += (_, _) =>
+            {
+                if (detailsSessionFilterCombo.SelectedItem is string filter)
+                {
+                    detailsSessionFilter = filter;
+                    if (currentDetailsApp is not null)
+                    {
+                        RefreshDetailsSessionList(currentDetailsApp);
+                    }
+                }
+            };
+            header.Controls.Add(detailsSessionFilterCombo);
+            header.Resize += (_, _) =>
+            {
+                detailsSessionFilterCombo.Location = new Point(
+                    Math.Max(0, header.ClientSize.Width - detailsSessionFilterCombo.Width),
+                    4);
+            };
+
+            return header;
+        }
+
+        // Back link, app icon, name, category, total time, and the running-status
+        // card with Start / Stop Tracking on the right.
         private Panel BuildDetailsSummary()
         {
             var summary = new Panel { Dock = DockStyle.Fill };
@@ -1206,7 +1270,6 @@ namespace AppTime
             };
             summary.Controls.Add(detailsCategoryPill);
 
-            // Large total tracked time under the name (Steam-style profile emphasis).
             detailsUsageValueLabel = new Label
             {
                 AutoSize = true,
@@ -1224,15 +1287,50 @@ namespace AppTime
                 ForeColor = AppTheme.TextSecondary
             });
 
+            detailsStatusPanel = BuildDetailsStatusPanel();
+            detailsStatusPanel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            summary.Controls.Add(detailsStatusPanel);
+            summary.Resize += (_, _) => PositionDetailsStatusPanel(summary);
+            PositionDetailsStatusPanel(summary);
+
+            return summary;
+        }
+
+        private Panel BuildDetailsStatusPanel()
+        {
+            var panel = new RoundedPanel
+            {
+                Size = new Size(220, 110),
+                Padding = new Padding(14, 12, 14, 12)
+            };
+
+            detailsStatusTitleLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(14, 12),
+                Font = new Font(AppTheme.Base, FontStyle.Bold),
+                ForeColor = AppTheme.Success
+            };
+            panel.Controls.Add(detailsStatusTitleLabel);
+
+            detailsStatusMetaLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(14, 34),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            };
+            panel.Controls.Add(detailsStatusMetaLabel);
+
             detailsActionButton = new Button
             {
-                Size = new Size(160, 42),
+                Size = new Size(192, 36),
+                Location = new Point(14, 58),
                 FlatStyle = FlatStyle.Flat,
                 ForeColor = Color.White,
                 Font = new Font(AppTheme.Base, FontStyle.Bold),
                 Cursor = Cursors.Hand,
-                TabStop = false,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
+                TabStop = false
             };
             detailsActionButton.FlatAppearance.BorderSize = 0;
             detailsActionButton.Click += (_, _) =>
@@ -1261,24 +1359,21 @@ namespace AppTime
                 detailsActionButtonHovered = false;
                 UpdateDetailsActionButtonAppearance();
             };
-            summary.Controls.Add(detailsActionButton);
-            summary.Resize += (_, _) => PositionDetailsLaunchButton(summary);
-            PositionDetailsLaunchButton(summary);
-            UpdateDetailsActionButtonAppearance();
+            panel.Controls.Add(detailsActionButton);
 
-            return summary;
+            return panel;
         }
 
-        private void PositionDetailsLaunchButton(Control summary)
+        private void PositionDetailsStatusPanel(Control summary)
         {
-            if (detailsActionButton is null)
+            if (detailsStatusPanel is null)
             {
                 return;
             }
 
-            detailsActionButton.Location = new Point(
-                Math.Max(0, summary.ClientSize.Width - detailsActionButton.Width),
-                40);
+            detailsStatusPanel.Location = new Point(
+                Math.Max(0, summary.ClientSize.Width - detailsStatusPanel.Width),
+                24);
         }
 
         private TableLayoutPanel BuildDetailsStatsRow()
@@ -1303,29 +1398,51 @@ namespace AppTime
 
         private void UpdateDetailsActionButtonAppearance()
         {
-            if (detailsActionButton is null)
+            if (detailsActionButton is null || detailsStatusPanel is null)
             {
                 return;
             }
 
             var isRunning = currentDetailsApp is not null && IsProcessRunning(currentDetailsApp);
 
-            if (!isRunning)
+            if (isRunning)
             {
-                detailsActionButton.Text = "Start";
-                detailsActionButton.BackColor = AppTheme.Success;
-                return;
-            }
+                detailsStatusPanel.BackColor = AppTheme.SuccessSubtle;
+                detailsStatusTitleLabel.Text = "●  Currently Running";
+                detailsStatusTitleLabel.ForeColor = AppTheme.Success;
 
-            if (detailsActionButtonHovered)
-            {
-                detailsActionButton.Text = "Stop";
-                detailsActionButton.BackColor = AppTheme.Danger;
+                if (currentDetailsApp is not null
+                    && activeSessionStarts.TryGetValue(currentDetailsApp.Id, out var started))
+                {
+                    var elapsed = DateTime.Now - started;
+                    detailsStatusMetaLabel.Text =
+                        $"Started {started:HH:mm}  ·  {FormatDuration(elapsed)}";
+                }
+                else
+                {
+                    detailsStatusMetaLabel.Text = "Tracking now";
+                }
+
+                // Same Start / Running / Stop pattern as library cards.
+                if (detailsActionButtonHovered)
+                {
+                    detailsActionButton.Text = "Stop";
+                    detailsActionButton.BackColor = AppTheme.Danger;
+                }
+                else
+                {
+                    detailsActionButton.Text = "Running";
+                    detailsActionButton.BackColor = AppTheme.Accent;
+                }
             }
             else
             {
-                detailsActionButton.Text = "Running";
-                detailsActionButton.BackColor = AppTheme.Accent;
+                detailsStatusPanel.BackColor = AppTheme.PanelBackground;
+                detailsStatusTitleLabel.Text = "Not running";
+                detailsStatusTitleLabel.ForeColor = AppTheme.TextSecondary;
+                detailsStatusMetaLabel.Text = "Launch to start tracking";
+                detailsActionButton.Text = "Start";
+                detailsActionButton.BackColor = AppTheme.Success;
             }
         }
 
@@ -1344,10 +1461,7 @@ namespace AppTime
 
             UpdateDetailsStats(app);
             UpdateDetailsActionButtonAppearance();
-
-            var appSessions = GetAppSessionsIncludingActive(app.Id)
-                .OrderByDescending(s => s.StartTime);
-            PopulateSessionsTable(detailsSessionsTable, appSessions, "No sessions recorded for this app yet.");
+            RefreshDetailsSessionList(app);
 
             libraryPanel.Visible = false;
             overviewPanel.Visible = false;
@@ -1375,6 +1489,27 @@ namespace AppTime
             detailsSessionsCountValueLabel.Text = appSessions.Count.ToString();
         }
 
+        private void RefreshDetailsSessionList(AppEntry app)
+        {
+            var appSessions = FilterDetailsSessions(GetAppSessionsIncludingActive(app.Id))
+                .OrderByDescending(s => s.StartTime);
+            PopulateDetailsSessionHistory(detailsSessionsTable, appSessions, app);
+        }
+
+        private IEnumerable<AppSession> FilterDetailsSessions(IEnumerable<AppSession> source)
+        {
+            var today = DateTime.Today;
+            return detailsSessionFilter switch
+            {
+                "This Week" => source.Where(s =>
+                    s.StartTime.Date >= StartOfWeek(today) && s.StartTime.Date <= today),
+                "This Month" => source.Where(s =>
+                    s.StartTime.Date >= new DateTime(today.Year, today.Month, 1)
+                    && s.StartTime.Date <= today),
+                _ => source
+            };
+        }
+
         // Completed sessions for an app, plus a live open session if it is running.
         private IEnumerable<AppSession> GetAppSessionsIncludingActive(Guid appId)
         {
@@ -1391,6 +1526,218 @@ namespace AppTime
             }
 
             return completed;
+        }
+
+        // Day-grouped session list for the profile history card (richer than the
+        // plain History helper used elsewhere).
+        private void PopulateDetailsSessionHistory(
+            TableLayoutPanel table,
+            IEnumerable<AppSession> sessionsToShow,
+            AppEntry app)
+        {
+            table.SuspendLayout();
+            table.Controls.Clear();
+            table.RowStyles.Clear();
+            table.RowCount = 0;
+
+            var sessionList = sessionsToShow.ToList();
+            if (sessionList.Count == 0)
+            {
+                table.RowCount = 1;
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
+                table.Controls.Add(new Label
+                {
+                    Text = "No sessions recorded for this app yet.",
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary
+                }, 0, 0);
+                table.ResumeLayout(true);
+                table.Height = 36 + table.Padding.Vertical;
+                return;
+            }
+
+            var today = DateTime.Today;
+            var rowIndex = 0;
+
+            foreach (var group in sessionList.GroupBy(s => s.StartTime.Date).OrderByDescending(g => g.Key))
+            {
+                var daySessions = group.OrderByDescending(s => s.StartTime).ToList();
+                var dayTicks = daySessions.Sum(s => Math.Max(0, (s.EndTime - s.StartTime).Ticks));
+                var dayTotal = FormatDuration(TimeSpan.FromTicks(dayTicks));
+
+                var groupLabel = group.Key == today
+                    ? "Today"
+                    : group.Key == today.AddDays(-1)
+                        ? "Yesterday"
+                        : group.Key.ToString("ddd, dd MMM");
+
+                table.RowCount = rowIndex + 1;
+                table.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
+                table.Controls.Add(
+                    BuildDetailsDayHeader(groupLabel, daySessions.Count, dayTotal),
+                    0,
+                    rowIndex);
+                rowIndex++;
+
+                foreach (var session in daySessions)
+                {
+                    table.RowCount = rowIndex + 1;
+                    table.RowStyles.Add(new RowStyle(SizeType.Absolute, SessionRowHeight));
+                    var row = BuildDetailsSessionRow(session, app);
+                    row.Dock = DockStyle.Fill;
+                    table.Controls.Add(row, 0, rowIndex);
+                    rowIndex++;
+                }
+            }
+
+            table.ResumeLayout(true);
+
+            // Shrink-wrap so the table does not stretch and leave blank space under the last row.
+            var contentHeight = 0;
+            foreach (RowStyle style in table.RowStyles)
+            {
+                if (style.SizeType == SizeType.Absolute)
+                {
+                    contentHeight += (int)style.Height;
+                }
+            }
+
+            table.Height = Math.Max(contentHeight + table.Padding.Vertical, 1);
+            table.Parent?.PerformLayout();
+        }
+
+        private Control BuildDetailsDayHeader(string title, int sessionCount, string totalDuration)
+        {
+            var header = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = AppTheme.AccentSubtle
+            };
+
+            header.Controls.Add(new Label
+            {
+                Text = title,
+                AutoSize = true,
+                Location = new Point(10, 8),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary,
+                BackColor = Color.Transparent
+            });
+
+            header.Controls.Add(new Label
+            {
+                Text = $"{sessionCount} sessions  ·  {totalDuration}",
+                AutoSize = true,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(200, 10),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary,
+                BackColor = Color.Transparent
+            });
+
+            header.Resize += (_, _) =>
+            {
+                if (header.Controls.Count > 1)
+                {
+                    var summary = header.Controls[1];
+                    summary.Location = new Point(
+                        Math.Max(120, header.ClientSize.Width - summary.Width - 10),
+                        10);
+                }
+            };
+
+            return header;
+        }
+
+        private Control BuildDetailsSessionRow(AppSession session, AppEntry app)
+        {
+            var duration = FormatDuration(session.EndTime - session.StartTime);
+            var timeRange = $"{session.StartTime:HH:mm} – {session.EndTime:HH:mm}";
+            var category = string.IsNullOrWhiteSpace(app.Category) ? "Other" : app.Category;
+
+            var content = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 5,
+                RowCount = 1,
+                Padding = new Padding(0, 0, 0, 1)
+            };
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20f));
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12f));
+            content.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            const int iconSize = 22;
+            var iconBox = new Panel { Dock = DockStyle.Fill };
+            iconBox.Controls.Add(new PictureBox
+            {
+                Image = AppIconCache.GetIcon(app, iconSize),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Size = new Size(iconSize, iconSize),
+                Location = new Point(4, 13),
+                BackColor = Color.Transparent
+            });
+            content.Controls.Add(iconBox, 0, 0);
+
+            var nameCell = new Panel { Dock = DockStyle.Fill };
+            nameCell.Controls.Add(new Label
+            {
+                Text = app.Name,
+                AutoSize = true,
+                Location = new Point(0, 6),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary
+            });
+            nameCell.Controls.Add(new Label
+            {
+                Text = category,
+                AutoSize = true,
+                Location = new Point(0, 26),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+            content.Controls.Add(nameCell, 1, 0);
+
+            content.Controls.Add(new Label
+            {
+                Text = timeRange,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            }, 2, 0);
+
+            content.Controls.Add(new Label
+            {
+                Text = duration,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextPrimary
+            }, 3, 0);
+
+            content.Controls.Add(new Label
+            {
+                Text = "›",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font(AppTheme.CardTitle.FontFamily, 12f),
+                ForeColor = AppTheme.TextSecondary
+            }, 4, 0);
+
+            var wrapper = new Panel { Dock = DockStyle.Fill };
+            wrapper.Controls.Add(content);
+            wrapper.Controls.Add(new Panel
+            {
+                Height = 1,
+                BackColor = AppTheme.Border,
+                Dock = DockStyle.Bottom
+            });
+
+            return wrapper;
         }
 
         private Panel BuildHistoryPanel()
