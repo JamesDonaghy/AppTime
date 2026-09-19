@@ -75,9 +75,10 @@ namespace AppTime
         private Label detailsStatusMetaLabel = null!;
         private Button detailsActionButton = null!;
         private bool detailsActionButtonHovered;
-        private ComboBox detailsSessionFilterCombo = null!;
-        private string detailsSessionFilter = "All Sessions";
+        private Label detailsViewAllSessionsLink = null!;
         private TableLayoutPanel detailsSessionsTable = null!;
+        // Profile shows a short recent list only; full history lives on Sessions.
+        private const int DetailsRecentSessionCount = 5;
 
         // Polls every few seconds for whether each app's process is currently running,
         // and accumulates usage time while it is. A WinForms Timer ticks on the UI
@@ -1168,51 +1169,45 @@ namespace AppTime
 
             header.Controls.Add(new Label
             {
-                Text = "Session History",
+                Text = "Recent Sessions",
                 AutoSize = true,
                 Location = new Point(0, 8),
                 Font = AppTheme.SectionHeading,
                 ForeColor = AppTheme.TextPrimary
             });
 
-            detailsSessionFilterCombo = new ComboBox
+            detailsViewAllSessionsLink = new Label
             {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                FlatStyle = FlatStyle.Flat,
-                Width = 140,
-                Height = 28,
+                Text = "View all sessions →",
+                AutoSize = true,
+                Cursor = Cursors.Hand,
                 Font = AppTheme.Base,
-                BackColor = AppTheme.CardBackground,
-                ForeColor = AppTheme.TextPrimary,
+                ForeColor = AppTheme.Accent,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
-            detailsSessionFilterCombo.Items.AddRange(new object[]
-            {
-                "All Sessions",
-                "This Week",
-                "This Month"
-            });
-            detailsSessionFilterCombo.SelectedIndex = 0;
-            detailsSessionFilterCombo.SelectedIndexChanged += (_, _) =>
-            {
-                if (detailsSessionFilterCombo.SelectedItem is string filter)
-                {
-                    detailsSessionFilter = filter;
-                    if (currentDetailsApp is not null)
-                    {
-                        RefreshDetailsSessionList(currentDetailsApp);
-                    }
-                }
-            };
-            header.Controls.Add(detailsSessionFilterCombo);
+            detailsViewAllSessionsLink.Click += (_, _) => OpenSessionsForCurrentApp();
+            header.Controls.Add(detailsViewAllSessionsLink);
             header.Resize += (_, _) =>
             {
-                detailsSessionFilterCombo.Location = new Point(
-                    Math.Max(0, header.ClientSize.Width - detailsSessionFilterCombo.Width),
-                    4);
+                detailsViewAllSessionsLink.Location = new Point(
+                    Math.Max(0, header.ClientSize.Width - detailsViewAllSessionsLink.Width),
+                    8);
             };
 
             return header;
+        }
+
+        // Jump to the Sessions page with this app pre-selected in the filter.
+        private void OpenSessionsForCurrentApp()
+        {
+            if (currentDetailsApp is not null)
+            {
+                selectedHistoryAppFilter = currentDetailsApp.Id;
+                selectedHistoryCategoryFilter = null;
+                selectedHistoryPeriod = "This Week";
+            }
+
+            NavigateToViewKey("History");
         }
 
         // Back link, app icon, name, category, total time, and the running-status
@@ -1491,23 +1486,11 @@ namespace AppTime
 
         private void RefreshDetailsSessionList(AppEntry app)
         {
-            var appSessions = FilterDetailsSessions(GetAppSessionsIncludingActive(app.Id))
-                .OrderByDescending(s => s.StartTime);
+            // Only the most recent sessions on the profile — full list is on Sessions.
+            var appSessions = GetAppSessionsIncludingActive(app.Id)
+                .OrderByDescending(s => s.StartTime)
+                .Take(DetailsRecentSessionCount);
             PopulateDetailsSessionHistory(detailsSessionsTable, appSessions, app);
-        }
-
-        private IEnumerable<AppSession> FilterDetailsSessions(IEnumerable<AppSession> source)
-        {
-            var today = DateTime.Today;
-            return detailsSessionFilter switch
-            {
-                "This Week" => source.Where(s =>
-                    s.StartTime.Date >= StartOfWeek(today) && s.StartTime.Date <= today),
-                "This Month" => source.Where(s =>
-                    s.StartTime.Date >= new DateTime(today.Year, today.Month, 1)
-                    && s.StartTime.Date <= today),
-                _ => source
-            };
         }
 
         // Completed sessions for an app, plus a live open session if it is running.
@@ -1547,7 +1530,7 @@ namespace AppTime
                 table.RowStyles.Add(new RowStyle(SizeType.Absolute, 36f));
                 table.Controls.Add(new Label
                 {
-                    Text = "No sessions recorded for this app yet.",
+                    Text = "No recent sessions for this app.",
                     AutoSize = true,
                     Font = AppTheme.Base,
                     ForeColor = AppTheme.TextSecondary
