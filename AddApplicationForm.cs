@@ -21,7 +21,7 @@ namespace AppTime
         public string ApplicationName { get; private set; } = string.Empty;
         public string Category { get; private set; } = string.Empty;
 
-        public AddApplicationForm(string executablePath)
+        public AddApplicationForm(string executablePath, string? preferredCategory = null)
         {
             this.executablePath = executablePath;
 
@@ -36,6 +36,11 @@ namespace AppTime
             Font = AppTheme.Base;
 
             InitializeComponent();
+
+            if (!string.IsNullOrWhiteSpace(preferredCategory))
+            {
+                cmbCategory.Text = preferredCategory;
+            }
         }
 
         private void InitializeComponent()

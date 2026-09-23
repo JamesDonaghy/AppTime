@@ -16,6 +16,8 @@ namespace AppTime
 
         private TextBox txtSearch = null!;
         private FlowLayoutPanel libraryFlow = null!;
+        private Panel suggestedAppsSection = null!;
+        private FlowLayoutPanel suggestedAppsFlow = null!;
         private Label libraryHeading = null!;
         private SidebarItem? selectedSidebarItem;
         private Panel libraryPanel = null!;
@@ -3041,6 +3043,9 @@ namespace AppTime
             headerRow.Controls.Add(libraryHeading);
             headerRow.Controls.Add(btnAddApplication);
 
+            suggestedAppsSection = BuildSuggestedAppsSection();
+            suggestedAppsSection.Dock = DockStyle.Top;
+
             libraryFlow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -3051,12 +3056,198 @@ namespace AppTime
                 Padding = new Padding(0, 8, 0, 0)
             };
 
-            // Fill-docked control added before the Top-docked header row, so the header
-            // takes its slice from the top and the flow panel fills what's left below it
+            // Fill first, then Top sections (suggestions under header, list below).
             panel.Controls.Add(libraryFlow);
+            panel.Controls.Add(suggestedAppsSection);
             panel.Controls.Add(headerRow);
 
             return panel;
+        }
+
+        private Panel BuildSuggestedAppsSection()
+        {
+            var section = new Panel
+            {
+                Height = 0,
+                Visible = false,
+                Padding = new Padding(0, 4, 0, 12)
+            };
+
+            var title = new Label
+            {
+                Text = "Suggested applications",
+                AutoSize = true,
+                Location = new Point(0, 4),
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            };
+            section.Controls.Add(title);
+
+            var subtitle = new Label
+            {
+                Text = "Detected from apps currently running on this PC that are not in your library yet.",
+                AutoSize = true,
+                Location = new Point(0, 26),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            };
+            section.Controls.Add(subtitle);
+
+            suggestedAppsFlow = new FlowLayoutPanel
+            {
+                Location = new Point(0, 48),
+                Height = 150,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoScroll = false,
+                BackColor = AppTheme.Background
+            };
+            section.Controls.Add(suggestedAppsFlow);
+            section.Resize += (_, _) =>
+            {
+                suggestedAppsFlow.Width = Math.Max(0, section.ClientSize.Width);
+            };
+
+            return section;
+        }
+
+        private void RefreshSuggestedApps()
+        {
+            if (suggestedAppsSection is null || suggestedAppsFlow is null)
+            {
+                return;
+            }
+
+            // Only show on the full All Apps library (not category filters or search).
+            var showSuggestions =
+                libraryPanel.Visible
+                && selectedSidebarItem?.ViewKey is null
+                && selectedSidebarItem?.FilterCategory is null
+                && string.IsNullOrWhiteSpace(txtSearch.Text);
+
+            if (!showSuggestions)
+            {
+                suggestedAppsSection.Visible = false;
+                suggestedAppsSection.Height = 0;
+                return;
+            }
+
+            List<AppDetector.DetectedApp> suggestions;
+            try
+            {
+                suggestions = AppDetector.DetectSuggestions(allApps, maxCount: 5).ToList();
+            }
+            catch
+            {
+                suggestions = new List<AppDetector.DetectedApp>();
+            }
+
+            suggestedAppsFlow.SuspendLayout();
+            suggestedAppsFlow.Controls.Clear();
+
+            if (suggestions.Count == 0)
+            {
+                suggestedAppsSection.Visible = false;
+                suggestedAppsSection.Height = 0;
+                suggestedAppsFlow.ResumeLayout();
+                return;
+            }
+
+            foreach (var detected in suggestions)
+            {
+                suggestedAppsFlow.Controls.Add(BuildSuggestedAppCard(detected));
+            }
+
+            suggestedAppsFlow.ResumeLayout();
+            suggestedAppsSection.Height = 210;
+            suggestedAppsSection.Visible = true;
+        }
+
+        private Control BuildSuggestedAppCard(AppDetector.DetectedApp detected)
+        {
+            var card = new RoundedPanel
+            {
+                Width = 148,
+                Height = 142,
+                Margin = new Padding(0, 0, 12, 0),
+                Padding = new Padding(10, 10, 10, 10)
+            };
+
+            var icon = new PictureBox
+            {
+                Image = AppIconCache.GetIcon(detected.ExecutablePath, detected.Name, 32),
+                Size = new Size(32, 32),
+                Location = new Point(10, 12),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent
+            };
+            card.Controls.Add(icon);
+
+            card.Controls.Add(new Label
+            {
+                Text = detected.Name,
+                AutoSize = false,
+                Size = new Size(128, 36),
+                Location = new Point(10, 52),
+                Font = AppTheme.CardTitle,
+                ForeColor = AppTheme.TextPrimary,
+                AutoEllipsis = true
+            });
+
+            card.Controls.Add(new Label
+            {
+                Text = detected.SuggestedCategory,
+                AutoSize = true,
+                Location = new Point(10, 90),
+                Font = AppTheme.SmallText,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            var addButton = new Button
+            {
+                Text = "Add",
+                Size = new Size(128, 28),
+                Location = new Point(10, 108),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppTheme.Accent,
+                ForeColor = Color.White,
+                Font = AppTheme.SmallText,
+                Cursor = Cursors.Hand,
+                TabStop = false
+            };
+            addButton.FlatAppearance.BorderSize = 0;
+            addButton.Click += (_, _) => AddDetectedApplication(detected);
+            card.Controls.Add(addButton);
+
+            return card;
+        }
+
+        private void AddDetectedApplication(AppDetector.DetectedApp detected)
+        {
+            if (allApps.Any(a =>
+                    string.Equals(a.ExecutablePath, detected.ExecutablePath, StringComparison.OrdinalIgnoreCase)))
+            {
+                RefreshSuggestedApps();
+                return;
+            }
+
+            using var addForm = new AddApplicationForm(detected.ExecutablePath, detected.SuggestedCategory);
+            if (addForm.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            allApps.Add(new AppEntry
+            {
+                Name = addForm.ApplicationName,
+                ExecutablePath = detected.ExecutablePath,
+                Category = string.IsNullOrWhiteSpace(addForm.Category)
+                    ? detected.SuggestedCategory
+                    : addForm.Category
+            });
+
+            LibraryStorage.SaveLibrary(allApps);
+            ApplyFilter();
         }
 
         private void BtnAddApplication_Click(object? sender, EventArgs e)
@@ -3151,6 +3342,7 @@ namespace AppTime
             // tick - refresh immediately so switching filters or adding/editing an app
             // doesn't show a stale state for a few seconds.
             RefreshRunningStates();
+            RefreshSuggestedApps();
         }
 
         private static string FormatTrackedTotal(List<AppEntry> apps)
