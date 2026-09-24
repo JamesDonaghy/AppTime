@@ -39,14 +39,22 @@ namespace AppTime
         }
 
         /// Returns up to <paramref name="maxCount"/> apps that look addable and are
-        /// not already present in <paramref name="library"/> (by executable path).
+        /// not already present in <paramref name="library"/> (by executable path),
+        /// and not listed in <paramref name="ignoredPaths"/>.
         public static IReadOnlyList<DetectedApp> DetectSuggestions(
             IEnumerable<AppEntry> library,
+            IEnumerable<string>? ignoredPaths = null,
             int maxCount = 5)
         {
             var knownPaths = new HashSet<string>(
                 library
                     .Select(a => a.ExecutablePath)
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Select(NormalizePath),
+                StringComparer.OrdinalIgnoreCase);
+
+            var ignored = new HashSet<string>(
+                (ignoredPaths ?? Enumerable.Empty<string>())
                     .Where(p => !string.IsNullOrWhiteSpace(p))
                     .Select(NormalizePath),
                 StringComparer.OrdinalIgnoreCase);
@@ -88,7 +96,9 @@ namespace AppTime
                     }
 
                     var normalized = NormalizePath(path);
-                    if (knownPaths.Contains(normalized) || found.ContainsKey(normalized))
+                    if (knownPaths.Contains(normalized)
+                        || ignored.Contains(normalized)
+                        || found.ContainsKey(normalized))
                     {
                         continue;
                     }

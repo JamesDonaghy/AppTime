@@ -18,6 +18,9 @@ namespace AppTime
         private FlowLayoutPanel libraryFlow = null!;
         private Panel suggestedAppsSection = null!;
         private FlowLayoutPanel suggestedAppsFlow = null!;
+        private Label suggestedAppsSubtitle = null!;
+        private Label suggestedAppsActionLink = null!;
+        private HashSet<string> ignoredSuggestions = new(StringComparer.OrdinalIgnoreCase);
         private Label libraryHeading = null!;
         private SidebarItem? selectedSidebarItem;
         private Panel libraryPanel = null!;
@@ -103,6 +106,8 @@ namespace AppTime
         {
             allApps = LibraryStorage.LoadLibrary();
             sessions = SessionStorage.LoadSessions();
+            // Session-only: dismissed suggestions return the next time AppTime starts.
+            ignoredSuggestions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             Text = "AppTime";
             BackColor = AppTheme.Background;
@@ -3066,46 +3071,67 @@ namespace AppTime
 
         private Panel BuildSuggestedAppsSection()
         {
-            var section = new Panel
+            // Blue-tinted container matching the Suggested Applications mock.
+            var section = new RoundedPanel
             {
                 Height = 0,
                 Visible = false,
-                Padding = new Padding(0, 4, 0, 12)
+                BackColor = AppTheme.AccentSubtle,
+                Padding = new Padding(16, 14, 16, 14)
             };
 
-            var title = new Label
+            section.Controls.Add(new Label
             {
-                Text = "Suggested applications",
+                Text = "Suggested Applications",
                 AutoSize = true,
-                Location = new Point(0, 4),
+                Location = new Point(16, 14),
                 Font = AppTheme.SectionHeading,
-                ForeColor = AppTheme.TextPrimary
-            };
-            section.Controls.Add(title);
+                ForeColor = AppTheme.TextPrimary,
+                BackColor = Color.Transparent
+            });
 
-            var subtitle = new Label
+            suggestedAppsSubtitle = new Label
             {
-                Text = "Detected from apps currently running on this PC that are not in your library yet.",
+                Text = "Apps detected on your PC that aren't in your library yet.",
                 AutoSize = true,
-                Location = new Point(0, 26),
+                Location = new Point(16, 36),
                 Font = AppTheme.SmallText,
-                ForeColor = AppTheme.TextSecondary
+                ForeColor = AppTheme.TextSecondary,
+                BackColor = Color.Transparent
             };
-            section.Controls.Add(subtitle);
+            section.Controls.Add(suggestedAppsSubtitle);
+
+            suggestedAppsActionLink = new Label
+            {
+                Text = "Dismiss all",
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.Accent,
+                BackColor = Color.Transparent,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            suggestedAppsActionLink.Click += (_, _) => DismissAllSuggestedApplications();
+            section.Controls.Add(suggestedAppsActionLink);
 
             suggestedAppsFlow = new FlowLayoutPanel
             {
-                Location = new Point(0, 48),
-                Height = 150,
+                Location = new Point(12, 54),
+                Height = 122,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
                 AutoScroll = false,
-                BackColor = AppTheme.Background
+                // Same blue as the strip so rounded card corners blend cleanly.
+                BackColor = AppTheme.AccentSubtle
             };
             section.Controls.Add(suggestedAppsFlow);
+
             section.Resize += (_, _) =>
             {
-                suggestedAppsFlow.Width = Math.Max(0, section.ClientSize.Width);
+                suggestedAppsFlow.Width = Math.Max(0, section.ClientSize.Width - 24);
+                suggestedAppsActionLink.Location = new Point(
+                    Math.Max(0, section.ClientSize.Width - suggestedAppsActionLink.Width - 16),
+                    16);
             };
 
             return section;
@@ -3119,13 +3145,13 @@ namespace AppTime
             }
 
             // Only show on the full All Apps library (not category filters or search).
-            var showSuggestions =
+            var showOnAllApps =
                 libraryPanel.Visible
                 && selectedSidebarItem?.ViewKey is null
                 && selectedSidebarItem?.FilterCategory is null
                 && string.IsNullOrWhiteSpace(txtSearch.Text);
 
-            if (!showSuggestions)
+            if (!showOnAllApps)
             {
                 suggestedAppsSection.Visible = false;
                 suggestedAppsSection.Height = 0;
@@ -3135,7 +3161,7 @@ namespace AppTime
             List<AppDetector.DetectedApp> suggestions;
             try
             {
-                suggestions = AppDetector.DetectSuggestions(allApps, maxCount: 5).ToList();
+                suggestions = AppDetector.DetectSuggestions(allApps, ignoredSuggestions, maxCount: 6).ToList();
             }
             catch
             {
@@ -3147,6 +3173,14 @@ namespace AppTime
 
             if (suggestions.Count == 0)
             {
+                // Dismiss all / ignore left nothing to show — offer restore instead of vanishing.
+                if (ignoredSuggestions.Count > 0)
+                {
+                    ShowSuggestionsRestoredPrompt();
+                    suggestedAppsFlow.ResumeLayout();
+                    return;
+                }
+
                 suggestedAppsSection.Visible = false;
                 suggestedAppsSection.Height = 0;
                 suggestedAppsFlow.ResumeLayout();
@@ -3159,36 +3193,84 @@ namespace AppTime
             }
 
             suggestedAppsFlow.ResumeLayout();
-            suggestedAppsSection.Height = 210;
+            SetSuggestedAppsHeaderState(dismissed: false);
+            suggestedAppsSection.Height = 188;
             suggestedAppsSection.Visible = true;
+        }
+
+        private void ShowSuggestionsRestoredPrompt()
+        {
+            // No cards — tell the user dismiss is temporary until AppTime restarts.
+            SetSuggestedAppsHeaderState(dismissed: true);
+            suggestedAppsFlow.Height = 0;
+            suggestedAppsSection.Height = 64;
+            suggestedAppsSection.Visible = true;
+        }
+
+        private void SetSuggestedAppsHeaderState(bool dismissed)
+        {
+            if (suggestedAppsSubtitle is not null)
+            {
+                suggestedAppsSubtitle.Text = dismissed
+                    ? "Suggestions were dismissed. Restart the app to restore them."
+                    : "Apps detected on your PC that aren't in your library yet.";
+            }
+
+            if (suggestedAppsActionLink is not null)
+            {
+                suggestedAppsActionLink.Text = "Dismiss all";
+                suggestedAppsActionLink.Visible = !dismissed;
+                if (!dismissed)
+                {
+                    suggestedAppsActionLink.Location = new Point(
+                        Math.Max(0, suggestedAppsSection.ClientSize.Width - suggestedAppsActionLink.Width - 16),
+                        16);
+                }
+            }
         }
 
         private Control BuildSuggestedAppCard(AppDetector.DetectedApp detected)
         {
+            // Compact cards so six fit comfortably in the blue strip.
+            const int cardWidth = 158;
             var card = new RoundedPanel
             {
-                Width = 148,
-                Height = 142,
-                Margin = new Padding(0, 0, 12, 0),
-                Padding = new Padding(10, 10, 10, 10)
+                Width = cardWidth,
+                Height = 118,
+                Margin = new Padding(2, 0, 6, 0),
+                Padding = new Padding(8, 8, 8, 8),
+                BackColor = AppTheme.CardBackground
             };
 
             var icon = new PictureBox
             {
-                Image = AppIconCache.GetIcon(detected.ExecutablePath, detected.Name, 32),
-                Size = new Size(32, 32),
-                Location = new Point(10, 12),
+                Image = AppIconCache.GetIcon(detected.ExecutablePath, detected.Name, 28),
+                Size = new Size(28, 28),
+                Location = new Point(8, 8),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BackColor = Color.Transparent
             };
             card.Controls.Add(icon);
 
+            var ignoreButton = new Label
+            {
+                Text = "×",
+                AutoSize = true,
+                Location = new Point(cardWidth - 22, 4),
+                Font = new Font(AppTheme.Base.FontFamily, 10f),
+                ForeColor = AppTheme.TextSecondary,
+                Cursor = Cursors.Hand,
+                BackColor = Color.Transparent
+            };
+            ignoreButton.Click += (_, _) => IgnoreSuggestedApplication(detected);
+            card.Controls.Add(ignoreButton);
+
             card.Controls.Add(new Label
             {
                 Text = detected.Name,
                 AutoSize = false,
-                Size = new Size(128, 36),
-                Location = new Point(10, 52),
+                Size = new Size(cardWidth - 16, 28),
+                Location = new Point(8, 40),
                 Font = AppTheme.CardTitle,
                 ForeColor = AppTheme.TextPrimary,
                 AutoEllipsis = true
@@ -3198,7 +3280,7 @@ namespace AppTime
             {
                 Text = detected.SuggestedCategory,
                 AutoSize = true,
-                Location = new Point(10, 90),
+                Location = new Point(8, 68),
                 Font = AppTheme.SmallText,
                 ForeColor = AppTheme.TextSecondary
             });
@@ -3206,8 +3288,8 @@ namespace AppTime
             var addButton = new Button
             {
                 Text = "Add",
-                Size = new Size(128, 28),
-                Location = new Point(10, 108),
+                Size = new Size(cardWidth - 16, 26),
+                Location = new Point(8, 86),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppTheme.Accent,
                 ForeColor = Color.White,
@@ -3220,6 +3302,38 @@ namespace AppTime
             card.Controls.Add(addButton);
 
             return card;
+        }
+
+        private void IgnoreSuggestedApplication(AppDetector.DetectedApp detected)
+        {
+            if (string.IsNullOrWhiteSpace(detected.ExecutablePath))
+            {
+                return;
+            }
+
+            ignoredSuggestions.Add(detected.ExecutablePath);
+            RefreshSuggestedApps();
+        }
+
+        private void DismissAllSuggestedApplications()
+        {
+            try
+            {
+                var current = AppDetector.DetectSuggestions(allApps, ignoredSuggestions, maxCount: 6);
+                foreach (var detected in current)
+                {
+                    if (!string.IsNullOrWhiteSpace(detected.ExecutablePath))
+                    {
+                        ignoredSuggestions.Add(detected.ExecutablePath);
+                    }
+                }
+            }
+            catch
+            {
+                // Detection failures shouldn't block dismiss.
+            }
+
+            RefreshSuggestedApps();
         }
 
         private void AddDetectedApplication(AppDetector.DetectedApp detected)

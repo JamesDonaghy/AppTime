@@ -17,7 +17,34 @@ namespace AppTime
             BackColor = AppTheme.CardBackground;
 
             // Owner-drawn - same reasoning as AppCard: avoids flicker on resize/redraw.
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.OptimizedDoubleBuffer,
+                true);
+        }
+
+        // Fill the full rectangle with the nearest opaque parent colour first so
+        // rounded corners don't leave square "ears". Walks past Transparent parents
+        // (e.g. FlowLayoutPanel) to the real surface colour underneath.
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            using var brush = new SolidBrush(FindOpaqueParentColor());
+            e.Graphics.FillRectangle(brush, ClientRectangle);
+        }
+
+        private Color FindOpaqueParentColor()
+        {
+            for (Control? p = Parent; p is not null; p = p.Parent)
+            {
+                if (p.BackColor.A == 255)
+                {
+                    return p.BackColor;
+                }
+            }
+
+            return AppTheme.Background;
         }
 
         protected override void OnPaint(PaintEventArgs e)
