@@ -8,14 +8,16 @@ namespace AppTime
     /// A single application tile in the library grid. Owner-drawn (rather than built
     /// from child Label controls) so the rounded card shape, border and hover state can
     /// all be handled in one place. A single click opens the app's details view;
-    /// right-click gives "Edit..." and "Remove from Library" options. Usage time is
-    /// shown above a Start/Running/Stop button rather than relying on double-click
-    /// (which doesn't play well with the single-click-for-details behaviour above).
+    /// right-click gives "Edit..." and "Remove from Library" options.
+    ///
+    /// Layout matches the library mock: category + running status on the top row,
+    /// name and usage below, and a full-width rounded Start / Stop action button.
     public class AppCard : Panel
     {
-        private const int CornerRadius = 10;
+        private const int CornerRadius = 12;
+        private const int ButtonCornerRadius = 8;
         private const int ContentPadding = 12;
-        private const int ActionButtonHeight = 24;
+        private const int ActionButtonHeight = 30;
         private const int UsageTextHeight = 16;
         private const int UsageButtonGap = 4;
 
@@ -46,38 +48,26 @@ namespace AppTime
             }
         }
 
-        // Raised when the action button is clicked while not running. MainForm owns
-        // the actual Process.Start call - this control only knows how to ask for it.
         public event EventHandler? LaunchRequested;
-
-        // Raised when the action button is clicked while running (shown as "Stop" on
-        // hover). MainForm owns actually ending the process.
         public event EventHandler? StopRequested;
-
-        // Raised when "Remove from Library" is chosen from the right-click menu.
-        // MainForm owns the confirmation prompt and the actual removal.
         public event EventHandler? RemoveRequested;
-
-        // Raised when "Edit..." is chosen from the right-click menu. MainForm owns
-        // showing the edit dialog and applying the result.
         public event EventHandler? EditRequested;
-
-        // Raised on a single click - MainForm owns navigating to the app's details
-        // view. Clicks on the action button don't bubble up to this (child control
-        // clicks are separate from the parent Panel's own Click event), so this only
-        // fires for clicks elsewhere on the card.
         public event EventHandler? DetailsRequested;
 
         public AppCard(AppEntry app)
         {
             App = app;
 
-            Margin = new Padding(0, 0, 16, 16);
+            // Keep footprint tight enough for 5 columns when a scrollbar is present.
+            Margin = new Padding(0, 0, 10, 10);
             Cursor = Cursors.Hand;
 
-            // Owner-drawn controls flicker without this - same reasoning as the form's
-            // DoubleBuffered flag.
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.OptimizedDoubleBuffer,
+                true);
 
             MouseEnter += (_, _) => { isHovered = true; Invalidate(); };
             MouseLeave += (_, _) => TryClearCardHover();
@@ -85,7 +75,7 @@ namespace AppTime
             actionButton = new Button
             {
                 FlatStyle = FlatStyle.Flat,
-                Font = AppTheme.SmallText,
+                Font = new Font(AppTheme.Base, FontStyle.Bold),
                 ForeColor = Color.White,
                 Cursor = Cursors.Hand,
                 TabStop = false
@@ -106,10 +96,6 @@ namespace AppTime
             {
                 isActionButtonHovered = true;
                 UpdateActionButtonAppearance();
-
-                // The button is a separate child window, so moving onto it fires this
-                // Panel's own MouseLeave even though the cursor is still visually
-                // within the card - keep the card's hover highlight on to match.
                 isHovered = true;
                 Invalidate();
             };
@@ -119,13 +105,12 @@ namespace AppTime
                 UpdateActionButtonAppearance();
                 TryClearCardHover();
             };
+            actionButton.Resize += (_, _) => ApplyButtonRoundedRegion();
             Controls.Add(actionButton);
             UpdateActionButtonAppearance();
 
-            // Size is set after actionButton exists - assigning Size triggers OnResize
-            // (via SetBoundsCore/UpdateBounds), which calls PositionActionButton() and
-            // would otherwise hit a null reference on actionButton if it ran first.
-            Size = new Size(168, 118);
+            // Sized for 5 columns; tall enough for icon, name, category, usage, button.
+            Size = new Size(188, 142);
 
             var editItem = new ToolStripMenuItem("Edit...");
             editItem.Click += (_, _) => EditRequested?.Invoke(this, EventArgs.Empty);
@@ -159,11 +144,23 @@ namespace AppTime
                 Height - ContentPadding - ActionButtonHeight,
                 Math.Max(0, Width - ContentPadding * 2),
                 ActionButtonHeight);
+            ApplyButtonRoundedRegion();
         }
 
-        // Both this Panel's own MouseLeave and the action button's MouseLeave fire in
-        // cases where the cursor hasn't actually left the card (see comments where
-        // these are wired up) - only clear the hover highlight if it genuinely has.
+        private void ApplyButtonRoundedRegion()
+        {
+            if (actionButton.Width <= 0 || actionButton.Height <= 0)
+            {
+                return;
+            }
+
+            using var path = RoundedRect(
+                new Rectangle(0, 0, actionButton.Width, actionButton.Height),
+                ButtonCornerRadius);
+            actionButton.Region?.Dispose();
+            actionButton.Region = new Region(path);
+        }
+
         private void TryClearCardHover()
         {
             if (ClientRectangle.Contains(PointToClient(Cursor.Position)))
@@ -175,25 +172,23 @@ namespace AppTime
             Invalidate();
         }
 
+        // Status text lives on the card; the button is only Start (idle) or Stop (running).
         private void UpdateActionButtonAppearance()
         {
             if (!isRunning)
             {
                 actionButton.Text = "Start";
-                actionButton.BackColor = AppTheme.Success;
+                // Green Start with a brighter green hover (mirrors red Stop hover).
+                actionButton.BackColor = isActionButtonHovered
+                    ? Color.FromArgb(0x1F, 0xB8, 0x6A)
+                    : AppTheme.Success;
                 return;
             }
 
-            if (isActionButtonHovered)
-            {
-                actionButton.Text = "Stop";
-                actionButton.BackColor = AppTheme.Danger;
-            }
-            else
-            {
-                actionButton.Text = "Running";
-                actionButton.BackColor = AppTheme.Accent;
-            }
+            actionButton.Text = "Stop";
+            actionButton.BackColor = isActionButtonHovered
+                ? AppTheme.Danger
+                : AppTheme.Accent;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -201,6 +196,7 @@ namespace AppTime
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
 
             var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
             using var path = RoundedRect(bounds, CornerRadius);
@@ -217,46 +213,112 @@ namespace AppTime
                 g.DrawPath(borderPen, path);
             }
 
-            var contentRect = new Rectangle(ContentPadding, ContentPadding, Width - ContentPadding * 2, Height - ContentPadding * 2);
+            var contentRect = new Rectangle(
+                ContentPadding,
+                ContentPadding,
+                Width - ContentPadding * 2,
+                Height - ContentPadding * 2);
 
-            // App icon, top-left. Extracted from the executable (or a letter tile fallback).
+            // App icon, top-left.
             const int iconSize = 28;
             var icon = AppIconCache.GetIcon(App, iconSize);
             g.DrawImage(icon, contentRect.Left, contentRect.Top, iconSize, iconSize);
 
-            // Category sits to the right of the icon so the top row stays compact.
-            var categoryRect = new Rectangle(
-                contentRect.Left + iconSize + 8,
+            // Running / Not running indicator, top-right.
+            DrawRunningStatus(g, contentRect);
+
+            // Stack: name → category → usage, then the action button below.
+            var nameTop = contentRect.Top + iconSize + 6;
+            var nameRect = new Rectangle(contentRect.Left, nameTop, contentRect.Width, 18);
+            TextRenderer.DrawText(
+                g,
+                App.Name,
+                AppTheme.CardTitle,
+                nameRect,
+                AppTheme.TextPrimary,
+                TextFormatFlags.Top
+                | TextFormatFlags.Left
+                | TextFormatFlags.EndEllipsis
+                | TextFormatFlags.NoPadding);
+
+            var category = string.IsNullOrWhiteSpace(App.Category) ? "Other" : App.Category;
+            var categoryRect = new Rectangle(contentRect.Left, nameRect.Bottom + 1, contentRect.Width, 15);
+            TextRenderer.DrawText(
+                g,
+                category,
+                AppTheme.SmallText,
+                categoryRect,
+                AppTheme.TextSecondary,
+                TextFormatFlags.Top
+                | TextFormatFlags.Left
+                | TextFormatFlags.EndEllipsis
+                | TextFormatFlags.NoPadding);
+
+            var usageTop = categoryRect.Bottom + 2;
+            var usageRect = new Rectangle(contentRect.Left, usageTop, contentRect.Width, UsageTextHeight);
+            TextRenderer.DrawText(
+                g,
+                FormatUsage(App.TotalUsageTime),
+                AppTheme.SmallText,
+                usageRect,
+                AppTheme.TextSecondary,
+                TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+        }
+
+        private void DrawRunningStatus(Graphics g, Rectangle contentRect)
+        {
+            const int dotSize = 7;
+            var statusText = isRunning ? "Running" : "Not running";
+            var statusColor = isRunning ? AppTheme.Success : AppTheme.TextSecondary;
+            var font = AppTheme.SmallText;
+
+            var textSize = TextRenderer.MeasureText(
+                statusText,
+                font,
+                new Size(200, 20),
+                TextFormatFlags.NoPadding);
+
+            var right = contentRect.Right;
+            var textWidth = Math.Min(textSize.Width, contentRect.Width / 2 + 20);
+            var textRect = new Rectangle(
+                right - textWidth,
                 contentRect.Top,
-                Math.Max(0, contentRect.Width - iconSize - 8 - 12),
-                iconSize);
-            TextRenderer.DrawText(g, App.Category, AppTheme.SmallText, categoryRect, AppTheme.TextSecondary,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+                textWidth,
+                20);
 
-            // Application name below the icon row.
-            var nameRect = new Rectangle(contentRect.Left, contentRect.Top + iconSize + 6, contentRect.Width, 36);
-            TextRenderer.DrawText(g, App.Name, AppTheme.CardTitle, nameRect, AppTheme.TextPrimary,
-                TextFormatFlags.Top | TextFormatFlags.Left | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
-
-            // Small dot, top-right - whether the app's process is currently running.
-            // Paired with the action button's own "Running" state below, rather than
-            // relying on colour alone.
+            // Dot sits just left of the status label.
             if (isRunning)
             {
-                const int dotSize = 8;
-                var dotRect = new Rectangle(contentRect.Right - dotSize, contentRect.Top + 1, dotSize, dotSize);
-                using var dotBrush = new SolidBrush(AppTheme.Success);
-                g.FillEllipse(dotBrush, dotRect);
+                var dotX = textRect.Left - dotSize - 5;
+                var dotY = contentRect.Top + (20 - dotSize) / 2;
+                if (dotX >= contentRect.Left)
+                {
+                    using var dotBrush = new SolidBrush(AppTheme.Success);
+                    g.FillEllipse(dotBrush, dotX, dotY, dotSize, dotSize);
+                }
+            }
+            else
+            {
+                // Subtle grey dot for the idle state so the layout stays balanced.
+                var dotX = textRect.Left - dotSize - 5;
+                var dotY = contentRect.Top + (20 - dotSize) / 2;
+                if (dotX >= contentRect.Left)
+                {
+                    using var dotBrush = new SolidBrush(Color.FromArgb(0xC0, 0xC5, 0xCE));
+                    g.FillEllipse(dotBrush, dotX, dotY, dotSize, dotSize);
+                }
             }
 
-            // Usage time, directly above the action button.
-            var usageRect = new Rectangle(
-                contentRect.Left,
-                Height - ContentPadding - ActionButtonHeight - UsageButtonGap - UsageTextHeight,
-                contentRect.Width,
-                UsageTextHeight);
-            TextRenderer.DrawText(g, FormatUsage(App.TotalUsageTime), AppTheme.SmallText, usageRect, AppTheme.TextSecondary,
-                TextFormatFlags.Bottom | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(
+                g,
+                statusText,
+                font,
+                textRect,
+                statusColor,
+                TextFormatFlags.VerticalCenter
+                | TextFormatFlags.Right
+                | TextFormatFlags.EndEllipsis
+                | TextFormatFlags.NoPadding);
         }
 
         private static string FormatUsage(TimeSpan usage)
@@ -275,6 +337,13 @@ namespace AppTime
         {
             var diameter = radius * 2;
             var path = new GraphicsPath();
+
+            if (radius <= 0 || bounds.Width < diameter || bounds.Height < diameter)
+            {
+                path.AddRectangle(bounds);
+                path.CloseFigure();
+                return path;
+            }
 
             path.AddArc(bounds.X, bounds.Y, diameter, diameter, 180, 90);
             path.AddArc(bounds.Right - diameter, bounds.Y, diameter, diameter, 270, 90);

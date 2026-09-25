@@ -2588,7 +2588,10 @@ namespace AppTime
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 114f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 154f));
+            // Tall enough for AppCard (142) + a little breathing room.
+            // Tall enough for AppCard (156) + gap.
+            // Tall enough for AppCard (138) + gap.
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 152f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160f));
 
@@ -2630,7 +2633,7 @@ namespace AppTime
             overviewRecentTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 130,
+                Height = 142,
                 ColumnCount = RecentAppsColumnCount,
                 RowCount = 1
             };
@@ -3017,7 +3020,13 @@ namespace AppTime
                 Padding = new Padding(28, 16, 28, 20)
             };
 
-            var headerRow = new Panel { Dock = DockStyle.Top, Height = 36 };
+            // Extra top padding so the header sits clearly below the suggested strip.
+            var headerRow = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 52,
+                Padding = new Padding(0, 14, 0, 0)
+            };
 
             libraryHeading = new Label
             {
@@ -3041,10 +3050,12 @@ namespace AppTime
             };
             btnAddApplication.FlatAppearance.BorderSize = 0;
             btnAddApplication.Click += BtnAddApplication_Click;
+            // Region needs a real size; apply after the header has laid out the button.
+            headerRow.Resize += (_, _) => ApplyRoundedButtonRegion(btnAddApplication, radius: 8);
+            btnAddApplication.SizeChanged += (_, _) => ApplyRoundedButtonRegion(btnAddApplication, radius: 8);
 
             // Fill-docked heading added before the Right-docked button, so the button
-            // claims its fixed slice on the right and the heading fills the rest -
-            // same Fill-then-edge ordering used throughout this layout.
+            // claims its fixed slice on the right and the heading fills the rest.
             headerRow.Controls.Add(libraryHeading);
             headerRow.Controls.Add(btnAddApplication);
 
@@ -3061,10 +3072,11 @@ namespace AppTime
                 Padding = new Padding(0, 8, 0, 0)
             };
 
-            // Fill first, then Top sections (suggestions under header, list below).
+            // Dock order: last Top control is nearest the top edge.
+            // Suggested strip → YOUR APPLICATIONS header → app grid.
             panel.Controls.Add(libraryFlow);
-            panel.Controls.Add(suggestedAppsSection);
             panel.Controls.Add(headerRow);
+            panel.Controls.Add(suggestedAppsSection);
 
             return panel;
         }
@@ -3299,9 +3311,29 @@ namespace AppTime
             };
             addButton.FlatAppearance.BorderSize = 0;
             addButton.Click += (_, _) => AddDetectedApplication(detected);
+            ApplyRoundedButtonRegion(addButton, radius: 8);
             card.Controls.Add(addButton);
 
             return card;
+        }
+
+        private static void ApplyRoundedButtonRegion(Button button, int radius)
+        {
+            if (button.Width <= 0 || button.Height <= 0)
+            {
+                return;
+            }
+
+            var bounds = new Rectangle(0, 0, button.Width, button.Height);
+            var diameter = radius * 2;
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddArc(bounds.X, bounds.Y, diameter, diameter, 180, 90);
+            path.AddArc(bounds.Right - diameter, bounds.Y, diameter, diameter, 270, 90);
+            path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+            path.AddArc(bounds.X, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+            path.CloseFigure();
+            button.Region?.Dispose();
+            button.Region = new Region(path);
         }
 
         private void IgnoreSuggestedApplication(AppDetector.DetectedApp detected)
