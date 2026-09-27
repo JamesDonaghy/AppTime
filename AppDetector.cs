@@ -6,9 +6,9 @@ using System.Linq;
 
 namespace AppTime
 {
-    /// Discovers desktop apps that are not yet in the library, primarily from
-    /// processes that are currently running. Keeps results small and practical
-    /// for a "Suggested" strip rather than a full installed-apps inventory.
+    /// Discovers running apps not yet in the library for the Suggested Applications
+    /// strip. Uses <see cref="ApplicationClassifier"/> so technical components
+    /// (runtimes, plugins, helpers, etc.) are not suggested.
     public static class AppDetector
     {
         private static readonly HashSet<string> IgnoredProcessNames = new(StringComparer.OrdinalIgnoreCase)
@@ -18,17 +18,7 @@ namespace AppTime
             "SearchHost", "ShellExperienceHost", "StartMenuExperienceHost",
             "TextInputHost", "sihost", "taskhostw", "explorer", "ApplicationFrameHost",
             "SystemSettings", "SecurityHealthService", "MsMpEng", "NisSrv",
-            "AppTime", "devenv", "MSBuild", "VBCSCompiler", "ServiceHub",
-            "PerfWatson2", "StandardCollector.Service"
-        };
-
-        private static readonly string[] SystemPathMarkers =
-        {
-            @"\Windows\System32\",
-            @"\Windows\SysWOW64\",
-            @"\Windows\WinSxS\",
-            @"\Windows\SystemApps\",
-            @"\WindowsApps\"
+            "AppTime", "dllhost", "rundll32", "regsvr32", "WerFault", "smartscreen"
         };
 
         public sealed class DetectedApp
@@ -38,13 +28,10 @@ namespace AppTime
             public string SuggestedCategory { get; init; } = "Other";
         }
 
-        /// Returns up to <paramref name="maxCount"/> apps that look addable and are
-        /// not already present in <paramref name="library"/> (by executable path),
-        /// and not listed in <paramref name="ignoredPaths"/>.
         public static IReadOnlyList<DetectedApp> DetectSuggestions(
             IEnumerable<AppEntry> library,
             IEnumerable<string>? ignoredPaths = null,
-            int maxCount = 5)
+            int maxCount = 6)
         {
             var knownPaths = new HashSet<string>(
                 library
@@ -81,16 +68,12 @@ namespace AppTime
                     }
                     catch
                     {
-                        // Access denied for some system processes — skip.
                         continue;
                     }
 
-                    if (string.IsNullOrWhiteSpace(path) || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (!File.Exists(path))
+                    if (string.IsNullOrWhiteSpace(path)
+                        || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                        || !File.Exists(path))
                     {
                         continue;
                     }
@@ -103,27 +86,26 @@ namespace AppTime
                         continue;
                     }
 
-                    if (IsSystemPath(normalized))
+                    var classification = ApplicationClassifier.ClassifyExecutable(path, process.ProcessName);
+                    if (!classification.IsSuggestable)
                     {
                         continue;
                     }
 
-                    var name = Path.GetFileNameWithoutExtension(path);
-                    if (string.IsNullOrWhiteSpace(name) || knownNames.Contains(name))
+                    if (knownNames.Contains(classification.DisplayName))
                     {
                         continue;
                     }
 
                     found[normalized] = new DetectedApp
                     {
-                        Name = name,
+                        Name = classification.DisplayName,
                         ExecutablePath = path,
-                        SuggestedCategory = GuessCategory(path, name)
+                        SuggestedCategory = classification.SuggestedCategory
                     };
 
                     if (found.Count >= maxCount * 3)
                     {
-                        // Collect a few extra then trim — process order is arbitrary.
                         break;
                     }
                 }
@@ -153,61 +135,6 @@ namespace AppTime
             {
                 return path.Trim();
             }
-        }
-
-        private static bool IsSystemPath(string path)
-        {
-            foreach (var marker in SystemPathMarkers)
-            {
-                if (path.Contains(marker, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static string GuessCategory(string path, string name)
-        {
-            var haystack = $"{path} {name}".ToLowerInvariant();
-
-            if (haystack.Contains("code") || haystack.Contains("studio") ||
-                haystack.Contains("git") || haystack.Contains("docker") ||
-                haystack.Contains("python") || haystack.Contains("node") ||
-                haystack.Contains("jetbrains") || haystack.Contains("rider") ||
-                haystack.Contains("intellij"))
-            {
-                return "Development";
-            }
-
-            if (haystack.Contains("photoshop") || haystack.Contains("premiere") ||
-                haystack.Contains("blender") || haystack.Contains("figma") ||
-                haystack.Contains("illustrator") || haystack.Contains("after effects") ||
-                haystack.Contains("paint") || haystack.Contains("gimp") ||
-                haystack.Contains("obsidian") || haystack.Contains("notion"))
-            {
-                return "Creative";
-            }
-
-            if (haystack.Contains("steam") || haystack.Contains("epic") ||
-                haystack.Contains("game") || haystack.Contains("minecraft") ||
-                haystack.Contains("riot") || haystack.Contains("battle.net") ||
-                haystack.Contains("xbox"))
-            {
-                return "Games";
-            }
-
-            if (haystack.Contains("discord") || haystack.Contains("slack") ||
-                haystack.Contains("teams") || haystack.Contains("zoom") ||
-                haystack.Contains("chrome") || haystack.Contains("firefox") ||
-                haystack.Contains("edge") || haystack.Contains("spotify") ||
-                haystack.Contains("outlook") || haystack.Contains("mail"))
-            {
-                return "Utilities";
-            }
-
-            return "Other";
         }
     }
 }
