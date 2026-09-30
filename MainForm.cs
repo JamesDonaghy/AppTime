@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace AppTime
@@ -85,15 +86,14 @@ namespace AppTime
         // Profile shows a short recent list only; full history lives on Sessions.
         private const int DetailsRecentSessionCount = 5;
 
-        // Polls every few seconds for whether each app's process is currently running,
-        // and accumulates usage time while it is. A WinForms Timer ticks on the UI
-        // thread, so no cross-thread Invoke is needed to update the cards from it.
+        // Polls every few seconds for which library app (if any) owns the foreground
+        // Windows window, and accumulates usage only for that app. Background
+        // processes no longer receive credit. Timer ticks on the UI thread.
         private readonly System.Windows.Forms.Timer runningCheckTimer;
         private DateTime lastRunningCheckTime;
 
-        // Tracks apps currently mid-session (running as of the last tick) and when
-        // that session started, so a session record can be created once the app
-        // stops running. Keyed by AppEntry.Id.
+        // At most one foreground-tracked session at a time. Keyed by AppEntry.Id;
+        // value is when that foreground stretch began.
         private readonly Dictionary<Guid, DateTime> activeSessionStarts = new();
 
         // Usage time is saved every few ticks rather than on every single one, so a
@@ -2590,8 +2590,8 @@ namespace AppTime
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
             // Tall enough for AppCard (142) + a little breathing room.
             // Tall enough for AppCard (156) + gap.
-            // Tall enough for AppCard (138) + gap.
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 152f));
+            // Tall enough for AppCard (142) + gap.
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 156f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160f));
 
@@ -2633,7 +2633,7 @@ namespace AppTime
             overviewRecentTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 142,
+                Height = 148,
                 ColumnCount = RecentAppsColumnCount,
                 RowCount = 1
             };
@@ -3517,59 +3517,114 @@ namespace AppTime
 
             // If way more time passed than the timer interval - the PC was asleep, or
             // this process was suspended - don't credit the whole gap as usage time.
-            // Counting one normal interval's worth is a simple, honest-enough fallback
-            // rather than a large, obviously-wrong jump in the total.
             if (elapsed > TimeSpan.FromSeconds(30))
             {
                 elapsed = TimeSpan.FromSeconds(3);
             }
 
-            var anyRunning = false;
+            // Only the library app that owns the foreground window earns usage time.
+            // Desktop, Explorer, untracked apps, etc. → no active session.
+            var foregroundApp = GetForegroundLibraryApp();
             var sessionsChanged = false;
 
-            foreach (var app in allApps)
+            // End any session that is no longer the foreground app (switch away or
+            // to an untracked window). This also covers minimise / close.
+            foreach (var appId in activeSessionStarts.Keys.ToList())
             {
-                var running = IsProcessRunning(app);
-
-                if (running)
+                if (foregroundApp is not null && foregroundApp.Id == appId)
                 {
-                    if (!activeSessionStarts.ContainsKey(app.Id))
-                    {
-                        // First tick we've seen this app running since it was last
-                        // stopped - this is the start of a new session.
-                        activeSessionStarts[app.Id] = now;
-                    }
-
-                    app.TotalUsageTime += elapsed;
-                    app.LastUsed = now;
-                    anyRunning = true;
+                    continue;
                 }
-                else if (activeSessionStarts.TryGetValue(app.Id, out var startTime))
+
+                if (activeSessionStarts.TryGetValue(appId, out var startTime))
                 {
-                    // Was running as of the last tick and isn't anymore - the session
-                    // just ended.
-                    sessions.Add(new AppSession { AppId = app.Id, StartTime = startTime, EndTime = now });
-                    activeSessionStarts.Remove(app.Id);
+                    sessions.Add(new AppSession { AppId = appId, StartTime = startTime, EndTime = now });
+                    activeSessionStarts.Remove(appId);
                     sessionsChanged = true;
                 }
             }
 
-            // Only worth saving if something was actually running, and only every few
-            // ticks - see SaveIntervalTicks.
-            if (anyRunning && ++ticksSinceLastSave >= SaveIntervalTicks)
+            if (foregroundApp is not null)
             {
-                LibraryStorage.SaveLibrary(allApps);
-                ticksSinceLastSave = 0;
+                if (!activeSessionStarts.ContainsKey(foregroundApp.Id))
+                {
+                    activeSessionStarts[foregroundApp.Id] = now;
+                }
+
+                foregroundApp.TotalUsageTime += elapsed;
+                foregroundApp.LastUsed = now;
+
+                if (++ticksSinceLastSave >= SaveIntervalTicks)
+                {
+                    LibraryStorage.SaveLibrary(allApps);
+                    ticksSinceLastSave = 0;
+                }
             }
 
-            // Session records are saved as soon as one ends, rather than batched like
-            // the usage total above - session-end events are already infrequent
-            // (unlike per-tick accumulation), so there's no need to delay saving them.
             if (sessionsChanged)
             {
                 SessionStorage.SaveSessions(sessions);
             }
         }
+
+        /// Returns the library app matching the current foreground window's process,
+        /// or null if the foreground window is not a tracked app (desktop, Explorer,
+        /// an untracked program, etc.).
+        private AppEntry? GetForegroundLibraryApp()
+        {
+            var processName = GetForegroundProcessName();
+            if (string.IsNullOrEmpty(processName))
+            {
+                return null;
+            }
+
+            // Same process-name matching as IsProcessRunning — good enough for this
+            // stage; exact path matching can come later if needed.
+            return allApps.FirstOrDefault(app =>
+            {
+                if (string.IsNullOrWhiteSpace(app.ExecutablePath))
+                {
+                    return false;
+                }
+
+                var appProcessName = Path.GetFileNameWithoutExtension(app.ExecutablePath);
+                return !string.IsNullOrEmpty(appProcessName)
+                    && string.Equals(appProcessName, processName, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        private static string? GetForegroundProcessName()
+        {
+            try
+            {
+                var hwnd = GetForegroundWindow();
+                if (hwnd == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                _ = GetWindowThreadProcessId(hwnd, out var processId);
+                if (processId == 0)
+                {
+                    return null;
+                }
+
+                using var process = Process.GetProcessById((int)processId);
+                return process.ProcessName;
+            }
+            catch
+            {
+                // Access denied or process exited between query and open — treat as
+                // no foreground library app for this tick.
+                return null;
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
         private void RefreshRunningStates()
         {
