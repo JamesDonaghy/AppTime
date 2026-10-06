@@ -26,10 +26,14 @@ namespace AppTime
         private SidebarItem? selectedSidebarItem;
         private Panel libraryPanel = null!;
         private Panel overviewPanel = null!;
+        private DayTimelineChart dayTimelineChart = null!;
+        private Panel overviewTopAppsHost = null!;
+        private Panel overviewPinnedAppsHost = null!;
         private TableLayoutPanel overviewRecentTable = null!;
         private Label overviewSessionsValueLabel = null!;
         private Label overviewTodayValueLabel = null!;
         private Label overviewThisWeekValueLabel = null!;
+        private const int RecentAppsColumnCount = 5;
         private Panel usagePanel = null!;
         private readonly Dictionary<string, Button> insightsPeriodTabButtons = new();
         private string selectedInsightsPeriod = "This Week";
@@ -65,7 +69,6 @@ namespace AppTime
         private const int SessionRowHeight = 52;
         private List<AppSession> historyFilteredSessions = new();
         private int historyVisibleCount = HistoryInitialCount;
-        private UsageTodayChart usageChart = null!;
         private Panel detailsPanel = null!;
         private AppEntry? currentDetailsApp;
         private Label detailsBackLink = null!;
@@ -961,9 +964,14 @@ namespace AppTime
             }
         }
 
-        private Control BuildMostUsedAppRow(AppEntry app, int rank, double percentOfTotal, TimeSpan? periodDuration = null)
+        private Control BuildMostUsedAppRow(
+            AppEntry app,
+            int rank,
+            double percentOfTotal,
+            TimeSpan? periodDuration = null,
+            int? rowWidth = null)
         {
-            var contentWidth = Math.Max(280, mostUsedAppsFlow.Width);
+            var contentWidth = Math.Max(200, rowWidth ?? (mostUsedAppsFlow?.Width ?? 280));
             var displayDuration = periodDuration ?? app.TotalUsageTime;
 
             var content = new TableLayoutPanel
@@ -2558,42 +2566,33 @@ namespace AppTime
             return hours > 0 ? $"{hours}h {minutes}m" : $"{minutes}m";
         }
 
-        // Number of columns in the Recent/Most Used grid - also how many apps are shown.
-        private const int RecentAppsColumnCount = 5;
-
         private Panel BuildOverviewPanel()
         {
-            // Overview layout - a row of stat cards, a Recent/Most Used row reusing
-            // the existing AppCard, and a basic bar chart of today's usage per app.
-            //
-            // A single-column TableLayoutPanel stacks the sections top to bottom -
-            // each row is Dock=Top full width, so the stat cards, recent apps grid
-            // and usage chart all line up to the same width automatically.
+            // Overview: stats → 24h timeline → Recent/Most Used cards → Top apps + Pinned.
             var panel = new Panel
             {
                 Dock = DockStyle.Fill,
                 BackColor = AppTheme.Background,
-                Padding = new Padding(28, 16, 28, 20)
+                Padding = new Padding(28, 12, 28, 16)
             };
 
             var layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 6,
+                RowCount = 8,
                 AutoScroll = true,
                 BackColor = AppTheme.Background
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 114f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-            // Tall enough for AppCard (142) + a little breathing room.
-            // Tall enough for AppCard (156) + gap.
-            // Tall enough for AppCard (142) + gap.
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 156f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160f));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32f));   // Overview heading
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 96f));   // stats
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28f));   // timeline heading
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 118f));  // timeline
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28f));   // recent heading
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 152f));  // recent cards
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28f));   // bottom headings
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 180f));  // top apps + pinned
 
             var heading = new Label
             {
@@ -2606,8 +2605,7 @@ namespace AppTime
 
             var statsTable = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
-                Height = 90,
+                Dock = DockStyle.Fill,
                 ColumnCount = 3,
                 RowCount = 1
             };
@@ -2621,19 +2619,48 @@ namespace AppTime
             AddSessionsStatCard(statsTable, 2, 3);
             layout.Controls.Add(statsTable, 0, 1);
 
-            var recentHeading = new Label
+            var timelineHeader = new Panel { Dock = DockStyle.Fill };
+            timelineHeader.Controls.Add(new Label
             {
-                Text = "Recent / Most Used",
+                Text = "Today's timeline",
                 AutoSize = true,
+                Location = new Point(0, 6),
                 Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary
+            });
+            var activeOnlyLabel = new Label
+            {
+                Text = "Active window only",
+                AutoSize = true,
+                Font = AppTheme.SmallText,
                 ForeColor = AppTheme.TextSecondary
             };
-            layout.Controls.Add(recentHeading, 0, 2);
+            timelineHeader.Controls.Add(activeOnlyLabel);
+            timelineHeader.Resize += (_, _) =>
+            {
+                activeOnlyLabel.Location = new Point(
+                    Math.Max(0, timelineHeader.ClientSize.Width - activeOnlyLabel.Width),
+                    8);
+            };
+            layout.Controls.Add(timelineHeader, 0, 2);
+
+            var timelineCard = new RoundedPanel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+            dayTimelineChart = new DayTimelineChart { Dock = DockStyle.Fill };
+            timelineCard.Controls.Add(dayTimelineChart);
+            layout.Controls.Add(timelineCard, 0, 3);
+
+            layout.Controls.Add(new Label
+            {
+                Text = "Recent / Most Used",
+                Dock = DockStyle.Fill,
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary,
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, 4);
 
             overviewRecentTable = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
-                Height = 148,
+                Dock = DockStyle.Fill,
                 ColumnCount = RecentAppsColumnCount,
                 RowCount = 1
             };
@@ -2642,33 +2669,78 @@ namespace AppTime
                 overviewRecentTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / RecentAppsColumnCount));
             }
             overviewRecentTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-            layout.Controls.Add(overviewRecentTable, 0, 3);
+            layout.Controls.Add(overviewRecentTable, 0, 5);
 
-            var usageHeading = new Label
+            var bottomHeadings = new TableLayoutPanel
             {
-                Text = "Usage Today",
-                AutoSize = true,
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            bottomHeadings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
+            bottomHeadings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+            bottomHeadings.Controls.Add(new Label
+            {
+                Text = "Top apps today",
+                Dock = DockStyle.Fill,
                 Font = AppTheme.SectionHeading,
-                ForeColor = AppTheme.TextSecondary
-            };
-            layout.Controls.Add(usageHeading, 0, 4);
-
-            var usageChartCard = new RoundedPanel
+                ForeColor = AppTheme.TextPrimary,
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, 0);
+            bottomHeadings.Controls.Add(new Label
             {
-                Dock = DockStyle.Top,
-                Height = 140,
-                Padding = new Padding(4)
+                Text = "Pinned apps",
+                Dock = DockStyle.Fill,
+                Font = AppTheme.SectionHeading,
+                ForeColor = AppTheme.TextPrimary,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(12, 0, 0, 0)
+            }, 1, 0);
+            layout.Controls.Add(bottomHeadings, 0, 6);
+
+            var bottomRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
             };
-            usageChart = new UsageTodayChart { Dock = DockStyle.Fill };
-            usageChartCard.Controls.Add(usageChart);
-            layout.Controls.Add(usageChartCard, 0, 5);
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55f));
+            bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45f));
+            bottomRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+            overviewTopAppsHost = new RoundedPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(16, 12, 16, 12),
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            overviewPinnedAppsHost = new RoundedPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(16, 12, 16, 12),
+                Margin = new Padding(8, 0, 0, 0)
+            };
+            overviewPinnedAppsHost.Controls.Add(new Label
+            {
+                Text = "Pin apps here for quick access.\nComing in a future update.",
+                AutoSize = true,
+                Location = new Point(4, 8),
+                Font = AppTheme.Base,
+                ForeColor = AppTheme.TextSecondary
+            });
+
+            bottomRow.Controls.Add(overviewTopAppsHost, 0, 0);
+            bottomRow.Controls.Add(overviewPinnedAppsHost, 1, 0);
+            layout.Controls.Add(bottomRow, 0, 7);
 
             panel.Controls.Add(layout);
 
-            PopulateOverviewRecentApps();
             UpdateOverviewTodayCard();
             UpdateOverviewThisWeekCard();
-            UpdateUsageTodayChart();
+            UpdateOverviewSessionsCard();
+            UpdateDayTimelineChart();
+            PopulateOverviewTopAppsToday();
+            PopulateOverviewRecentApps();
 
             return panel;
         }
@@ -2741,23 +2813,137 @@ namespace AppTime
             overviewThisWeekValueLabel.Text = FormatDuration(totalThisWeek);
         }
 
-        // Sums each app's completed sessions from today, one bar per app, sorted
-        // biggest first. Same "completed sessions only" caveat as the other cards -
-        // an app still running right now won't show up until it's closed.
-        private void UpdateUsageTodayChart()
+        private void UpdateDayTimelineChart()
         {
+            if (dayTimelineChart is null)
+            {
+                return;
+            }
+
             var today = DateTime.Today;
+            var segments = new List<(DateTime Start, DateTime End, string Category)>();
+
+            foreach (var session in sessions)
+            {
+                if (session.EndTime <= today || session.StartTime >= today.AddDays(1))
+                {
+                    continue;
+                }
+
+                var category = allApps.FirstOrDefault(a => a.Id == session.AppId)?.Category ?? "Other";
+                segments.Add((session.StartTime, session.EndTime, category));
+            }
+
+            // Include the in-progress foreground session so the timeline stays live.
+            foreach (var (appId, startTime) in activeSessionStarts)
+            {
+                var category = allApps.FirstOrDefault(a => a.Id == appId)?.Category ?? "Other";
+                segments.Add((startTime, DateTime.Now, category));
+            }
+
+            dayTimelineChart.SetSegments(segments);
+        }
+
+        private void PopulateOverviewTopAppsToday()
+        {
+            if (overviewTopAppsHost is null)
+            {
+                return;
+            }
+
+            overviewTopAppsHost.Controls.Clear();
+
+            // Same row layout as Insights → Most Used Applications, scoped to today.
+            var flow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = true,
+                BackColor = Color.Transparent
+            };
+            overviewTopAppsHost.Controls.Add(flow);
+
+            void SyncRowWidths()
+            {
+                flow.Width = Math.Max(0, overviewTopAppsHost.ClientSize.Width - overviewTopAppsHost.Padding.Horizontal);
+                foreach (Control child in flow.Controls)
+                {
+                    child.Width = flow.Width;
+                }
+            }
+
+            overviewTopAppsHost.Resize += (_, _) => SyncRowWidths();
+
+            var today = DateTime.Today;
+            var dayEnd = today.AddDays(1);
 
             var usageByApp = sessions
-                .Where(s => s.StartTime.Date == today)
+                .Where(s => s.EndTime > today && s.StartTime < dayEnd)
                 .GroupBy(s => s.AppId)
-                .Select(g => (
-                    Name: allApps.FirstOrDefault(a => a.Id == g.Key)?.Name ?? "Removed app",
-                    Duration: TimeSpan.FromTicks(g.Sum(s => (s.EndTime - s.StartTime).Ticks))))
-                .OrderByDescending(u => u.Duration)
+                .Select(g =>
+                {
+                    var app = allApps.FirstOrDefault(a => a.Id == g.Key);
+                    var duration = TimeSpan.FromTicks(g.Sum(s =>
+                    {
+                        var start = s.StartTime < today ? today : s.StartTime;
+                        var end = s.EndTime > dayEnd ? dayEnd : s.EndTime;
+                        return Math.Max(0, (end - start).Ticks);
+                    }));
+                    return (App: app, Duration: duration);
+                })
+                .Where(x => x.App is not null && x.Duration > TimeSpan.Zero)
                 .ToList();
 
-            usageChart.SetData(usageByApp);
+            foreach (var (appId, startTime) in activeSessionStarts)
+            {
+                var extraStart = startTime < today ? today : startTime;
+                var extra = DateTime.Now - extraStart;
+                if (extra <= TimeSpan.Zero)
+                {
+                    continue;
+                }
+
+                var idx = usageByApp.FindIndex(u => u.App!.Id == appId);
+                if (idx >= 0)
+                {
+                    var existing = usageByApp[idx];
+                    usageByApp[idx] = (existing.App, existing.Duration + extra);
+                }
+                else
+                {
+                    var app = allApps.FirstOrDefault(a => a.Id == appId);
+                    if (app is not null)
+                    {
+                        usageByApp.Add((app, extra));
+                    }
+                }
+            }
+
+            usageByApp = usageByApp.OrderByDescending(u => u.Duration).Take(5).ToList();
+            var totalTicks = usageByApp.Sum(u => u.Duration.Ticks);
+
+            if (usageByApp.Count == 0)
+            {
+                flow.Controls.Add(new Label
+                {
+                    Text = "No focused usage today yet.",
+                    AutoSize = true,
+                    Font = AppTheme.Base,
+                    ForeColor = AppTheme.TextSecondary
+                });
+                return;
+            }
+
+            var rowWidth = Math.Max(200, overviewTopAppsHost.ClientSize.Width - overviewTopAppsHost.Padding.Horizontal);
+            for (var i = 0; i < usageByApp.Count; i++)
+            {
+                var entry = usageByApp[i];
+                var percent = totalTicks > 0 ? entry.Duration.Ticks * 100.0 / totalTicks : 0;
+                flow.Controls.Add(BuildMostUsedAppRow(entry.App!, i + 1, percent, entry.Duration, rowWidth));
+            }
+
+            SyncRowWidths();
         }
 
         private TimeSpan SumSessionDurations(Func<AppSession, bool> predicate)
@@ -2813,13 +2999,19 @@ namespace AppTime
             return card;
         }
 
-        // Rebuilds the Recent/Most Used row from scratch, same pattern as ApplyFilter
-        // rebuilding libraryFlow. Simpler than diffing the existing cards.
         private void PopulateOverviewRecentApps()
         {
+            if (overviewRecentTable is null)
+            {
+                return;
+            }
+
             overviewRecentTable.Controls.Clear();
 
-            var topApps = allApps.OrderByDescending(a => a.TotalUsageTime).Take(RecentAppsColumnCount).ToList();
+            var topApps = allApps
+                .OrderByDescending(a => a.TotalUsageTime)
+                .Take(RecentAppsColumnCount)
+                .ToList();
 
             if (topApps.Count == 0)
             {
@@ -2830,27 +3022,26 @@ namespace AppTime
                     Font = AppTheme.Base,
                     ForeColor = AppTheme.TextSecondary
                 }, 0, 0);
-            }
-            else
-            {
-                for (var i = 0; i < topApps.Count; i++)
-                {
-                    var app = topApps[i];
-                    var card = new AppCard(app)
-                    {
-                        Dock = DockStyle.Fill,
-                        Margin = GridCellMargin(i, RecentAppsColumnCount, gap: 16)
-                    };
-                    card.LaunchRequested += (_, _) => LaunchApplication(app);
-                    card.StopRequested += (_, _) => StopApplication(app);
-                    card.EditRequested += (_, _) => EditApplication(app);
-                    card.RemoveRequested += (_, _) => RemoveApplication(app);
-                    card.DetailsRequested += (_, _) => ShowAppDetails(app);
-                    overviewRecentTable.Controls.Add(card, i, 0);
-                }
+                return;
             }
 
-            RefreshRunningStates();
+            for (var i = 0; i < topApps.Count; i++)
+            {
+                var app = topApps[i];
+                var card = new AppCard(app)
+                {
+                    Dock = DockStyle.Fill,
+                    Margin = GridCellMargin(i, RecentAppsColumnCount, gap: 12)
+                };
+                card.LaunchRequested += (_, _) => LaunchApplication(app);
+                card.StopRequested += (_, _) => StopApplication(app);
+                card.EditRequested += (_, _) => EditApplication(app);
+                card.RemoveRequested += (_, _) => RemoveApplication(app);
+                card.DetailsRequested += (_, _) => ShowAppDetails(app);
+                overviewRecentTable.Controls.Add(card, i, 0);
+            }
+
+            RefreshRunningStates(overviewRecentTable.Controls);
         }
 
         private Panel BuildSidebar()
@@ -2974,11 +3165,12 @@ namespace AppTime
 
                 if (item.ViewKey == "Overview")
                 {
-                    PopulateOverviewRecentApps();
                     UpdateOverviewSessionsCard();
                     UpdateOverviewTodayCard();
                     UpdateOverviewThisWeekCard();
-                    UpdateUsageTodayChart();
+                    UpdateDayTimelineChart();
+                    PopulateOverviewTopAppsToday();
+                    PopulateOverviewRecentApps();
                 }
 
                 if (item.ViewKey == "Usage")
@@ -3628,16 +3820,25 @@ namespace AppTime
 
         private void RefreshRunningStates()
         {
-            RefreshRunningStates(libraryFlow.Controls);
-            RefreshRunningStates(overviewRecentTable.Controls);
+            if (libraryFlow is not null)
+            {
+                RefreshRunningStates(libraryFlow.Controls);
+            }
 
-            // detailsPanel isn't built yet the first time this runs - Overview (built
-            // before detailsPanel in BuildMainContent) populates its Recent/Most Used
-            // cards during construction, which calls this. Guard rather than reorder
-            // construction, so this stays safe regardless of build order.
+            if (overviewRecentTable is not null)
+            {
+                RefreshRunningStates(overviewRecentTable.Controls);
+            }
+
             if (detailsPanel is not null && detailsPanel.Visible)
             {
                 UpdateDetailsActionButtonAppearance();
+            }
+
+            if (overviewPanel is not null && overviewPanel.Visible)
+            {
+                UpdateOverviewTodayCard();
+                UpdateDayTimelineChart();
             }
         }
 
