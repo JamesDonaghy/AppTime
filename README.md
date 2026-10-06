@@ -1,27 +1,45 @@
 # AppTime
 
 A desktop application library and usage tracker, built with C# and Windows Forms
-(.NET 8)
+(.NET 8).
 
-AppTime lets you keep your regularly-used desktop applications (Blender, Photoshop,
-VS Code, etc.) in one library, launch them from there, and - eventually - see how
-much time you actually spend in each one.
+AppTime keeps your regularly used apps in one library, launches them from there,
+and tracks how long you actively use each one based on the **foreground window**
+(not merely whether the process is running).
+
+## Features
+
+### Library
+- Browse apps by category (All Apps, Creative, Development, Games, Utilities)
+- Search the library by name
+- Add applications manually or from **Suggested Applications** (running apps not
+  yet in the library, filtered to user-facing software)
+- Application cards with icon, category, usage total, and Start / Stop
+- Edit or remove apps from the library (context menu)
+- Open an app profile for details, launch control, and recent sessions
+
+### Tracking
+- Usage is credited only to the library app that owns the **active Windows window**
+- Switching apps ends the previous session and starts a new one
+- Background processes do not accumulate time
+- Sessions and totals persist under `%AppData%\AppTime`
+
+### Overview
+- Today / This Week / Sessions summary cards
+- **Today’s timeline** - 24-hour view of focused usage by category
+- **Recent / Most Used** app cards
+- **Top apps today** ranked by focused time
+- **Pinned apps** placeholder (coming later)
+
+### Sessions & Insights
+- Sessions list with period tabs and app/category filters
+- Insights with period stats, usage charts, and most-used apps
 
 ## Status
 
-Early work in progress. The current build establishes the application shell and
-library view only:
-
-- Three-column layout: top bar, sidebar navigation, application library
-- Sidebar filtering by category
-- Basic name search
-- Add applications by browsing to an `.exe`, naming it and assigning a category
-- Application cards showing name, category and usage time
-- Double-click a card to launch its application
-- Library persists between runs (saved as JSON in `%AppData%\AppTime`)
-
-Not implemented yet: editing/removing applications, process detection, time
-tracking, and usage history/statistics. These are planned for later stages.
+Actively developed. Core library, foreground tracking, sessions, insights, and
+overview timeline are in place. Pinned apps and idle detection are not implemented
+yet.
 
 ## Built With
 
@@ -30,5 +48,11 @@ tracking, and usage history/statistics. These are planned for later stages.
 
 ## Getting Started
 
-1. Open this folder in VS Code (with the C# Dev Kit / C# extension installed)
-2. `dotnet build` to build, `dotnet run` to launch
+1. Open the project in Visual Studio or VS Code (C# extension / Dev Kit)
+2. `dotnet build` to build, `dotnet run --project AppTime` to launch
+
+Data is stored in:
+
+```
+%AppData%\AppTime\
+```
